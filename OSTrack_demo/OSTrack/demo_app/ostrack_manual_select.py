@@ -69,7 +69,7 @@ def main():
         verbose=True,
     )
 
-    cap = cv2.VideoCapture("cars.webm")
+    cap = cv2.VideoCapture("output.mp4")
     
     src_fps = cap.get(cv2.CAP_PROP_FPS)
     if src_fps <= 1e-3:
@@ -158,15 +158,6 @@ def main():
                     FONT,
                     0.65,
                     color,
-            elif result.state == "UNCERTAIN":
-                msg = result.message if result.message else "Target uncertain"
-                cv2.putText(
-                    frame,
-                    f"UNCERTAIN: {msg}",
-                    (10, 30),
-                    FONT,
-                    0.65,
-                    YELLOW,
                     2,
                     cv2.LINE_AA,
                 )

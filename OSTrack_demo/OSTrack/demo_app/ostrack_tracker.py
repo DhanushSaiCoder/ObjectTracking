@@ -80,7 +80,7 @@ class OSTrackTracker:
         min_box_area: float = 25.0,
         pad_ratio: float = 0.03,
         verbose: bool = False,
-        min_confidence: float = 0.30,
+        min_confidence: float = 0.60,
         max_center_distance_factor: float = 2.0,
         min_area_ratio: float = 0.25,
         max_area_ratio: float = 4.0,
@@ -307,15 +307,12 @@ class OSTrackTracker:
                     message=f"{reason} (lost timeout)",
                 )
 
-            self._initialized = False
             return TrackResult(
                 ok=False,
                 bbox=None,
                 score=score,
                 state="SEARCHING",
                 message=f"{reason} (searching {self._lost_frames}/{self.max_lost_frames})",
-                state="LOST",
-                message=f"{reason} (uncertain timeout)",
             )
 
         return TrackResult(
