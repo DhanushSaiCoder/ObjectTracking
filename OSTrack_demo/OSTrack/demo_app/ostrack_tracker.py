@@ -80,6 +80,12 @@ class OSTrackTracker:
         min_box_area: float = 25.0,
         pad_ratio: float = 0.03,
         verbose: bool = False,
+        min_confidence: float = 0.30,
+        max_center_distance_factor: float = 2.0,
+        min_area_ratio: float = 0.25,
+        max_area_ratio: float = 4.0,
+        max_uncertain_frames: int = 30,
+        freeze_backend_on_uncertain: bool = True,
     ) -> None:
         self.repo_root = Path(repo_root).expanduser().resolve()
         self.tracker_name = tracker_name
@@ -88,6 +94,28 @@ class OSTrackTracker:
         self.min_box_area = float(min_box_area)
         self.pad_ratio = float(pad_ratio)
         self.verbose = bool(verbose)
+        self.min_confidence = float(min_confidence)
+        self.max_center_distance_factor = float(max_center_distance_factor)
+        self.min_area_ratio = float(min_area_ratio)
+        self.max_area_ratio = float(max_area_ratio)
+        self.max_uncertain_frames = int(max_uncertain_frames)
+        self.freeze_backend_on_uncertain = bool(freeze_backend_on_uncertain)
+
+        if self.min_confidence < 0.0:
+            self.min_confidence = 0.0
+        elif self.min_confidence > 1.0:
+            self.min_confidence = 1.0
+
+        if self.max_center_distance_factor <= 0.0:
+            self.max_center_distance_factor = 1.0
+
+        if self.min_area_ratio <= 0.0:
+            self.min_area_ratio = 0.01
+        if self.max_area_ratio < self.min_area_ratio:
+            self.max_area_ratio = self.min_area_ratio
+
+        if self.max_uncertain_frames < 0:
+            self.max_uncertain_frames = 0
 
         self._backend = None
         self._backend_initialize_fn = None
@@ -96,6 +124,7 @@ class OSTrackTracker:
         self._initialized = False
         self._last_bbox: Optional[BBox] = None
         self._params = None
+        self._uncertain_frames = 0
 
         self._build_backend()
 
@@ -128,6 +157,7 @@ class OSTrackTracker:
 
         self._initialized = True
         self._last_bbox = bbox
+        self._uncertain_frames = 0
         return True
 
     def update(self, frame_bgr: np.ndarray) -> TrackResult:
@@ -152,6 +182,9 @@ class OSTrackTracker:
 
         h, w = frame_bgr.shape[:2]
 
+        if self.freeze_backend_on_uncertain and self._uncertain_frames > 0 and self._last_bbox is not None:
+            self._set_backend_state(self._last_bbox)
+
         try:
             out = self._backend_track_fn(frame_bgr)
         except Exception as e:
@@ -166,28 +199,22 @@ class OSTrackTracker:
 
         bbox_xywh, score = self._parse_backend_output(out)
         if bbox_xywh is None:
-            self._initialized = False
-            return TrackResult(
-                ok=False,
-                bbox=None,
-                score=score,
-                state="LOST",
-                message="No bbox from tracker",
-            )
+            return self._mark_uncertain(score, "No bbox from tracker")
 
         x, y, bw, bh = bbox_xywh
         if bw <= 1.0 or bh <= 1.0 or (bw * bh) < self.min_box_area:
-            self._initialized = False
-            return TrackResult(
-                ok=False,
-                bbox=None,
-                score=score,
-                state="LOST",
-                message="Degenerate bbox",
-            )
+            return self._mark_uncertain(score, "Degenerate bbox")
 
         bbox = BBox(x, y, x + bw, y + bh).clip(w, h)
+
+        if score is not None and score < self.min_confidence:
+            return self._mark_uncertain(score, f"Low confidence: {score:.3f} < {self.min_confidence:.3f}")
+
+        if self._last_bbox is not None and not self._passes_consistency_gate(self._last_bbox, bbox):
+            return self._mark_uncertain(score, "Inconsistent jump (possible drift)")
+
         self._last_bbox = bbox
+        self._uncertain_frames = 0
 
         return TrackResult(
             ok=True,
@@ -200,6 +227,7 @@ class OSTrackTracker:
     def reset(self) -> None:
         self._initialized = False
         self._last_bbox = None
+        self._uncertain_frames = 0
 
     @property
     def is_initialized(self) -> bool:
@@ -252,6 +280,65 @@ class OSTrackTracker:
 
         if self.verbose:
             print("[OSTrackTracker] Backend created successfully")
+
+
+    def _mark_uncertain(self, score: Optional[float], reason: str) -> TrackResult:
+        self._uncertain_frames += 1
+        if self.freeze_backend_on_uncertain and self._last_bbox is not None:
+            self._set_backend_state(self._last_bbox)
+
+        if self._uncertain_frames >= self.max_uncertain_frames:
+            self._initialized = False
+            return TrackResult(
+                ok=False,
+                bbox=None,
+                score=score,
+                state="LOST",
+                message=f"{reason} (uncertain timeout)",
+            )
+
+        return TrackResult(
+            ok=False,
+            bbox=None,
+            score=score,
+            state="UNCERTAIN",
+            message=f"{reason} ({self._uncertain_frames}/{self.max_uncertain_frames})",
+        )
+
+
+    def _set_backend_state(self, bbox_xyxy: BBox) -> None:
+        if self._backend is None:
+            return
+
+        try:
+            self._backend.state = bbox_xyxy.to_xywh()
+        except Exception:
+            if self.verbose:
+                print("[OSTrackTracker] warning: failed to reset backend state")
+
+
+    def _passes_consistency_gate(self, prev_bbox: BBox, new_bbox: BBox) -> bool:
+        prev_area = prev_bbox.area
+        new_area = new_bbox.area
+        if prev_area <= 0.0 or new_area <= 0.0:
+            return False
+
+        area_ratio = new_area / prev_area
+        if area_ratio < self.min_area_ratio or area_ratio > self.max_area_ratio:
+            return False
+
+        prev_cx = 0.5 * (prev_bbox.x1 + prev_bbox.x2)
+        prev_cy = 0.5 * (prev_bbox.y1 + prev_bbox.y2)
+        new_cx = 0.5 * (new_bbox.x1 + new_bbox.x2)
+        new_cy = 0.5 * (new_bbox.y1 + new_bbox.y2)
+
+        dx = new_cx - prev_cx
+        dy = new_cy - prev_cy
+        center_dist = float(np.hypot(dx, dy))
+
+        prev_diag = float(np.hypot(prev_bbox.w, prev_bbox.h))
+        max_center_dist = self.max_center_distance_factor * max(prev_diag, 1.0)
+        return center_dist <= max_center_dist
 
     def _parse_backend_output(self, out: Any) -> tuple[Optional[tuple[float, float, float, float]], Optional[float]]:
         """
