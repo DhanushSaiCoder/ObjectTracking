@@ -85,6 +85,7 @@ class OSTrackTracker:
         min_area_ratio: float = 0.25,
         max_area_ratio: float = 4.0,
         max_uncertain_frames: int = 30,
+        freeze_backend_on_uncertain: bool = True,
     ) -> None:
         self.repo_root = Path(repo_root).expanduser().resolve()
         self.tracker_name = tracker_name
@@ -98,6 +99,7 @@ class OSTrackTracker:
         self.min_area_ratio = float(min_area_ratio)
         self.max_area_ratio = float(max_area_ratio)
         self.max_uncertain_frames = int(max_uncertain_frames)
+        self.freeze_backend_on_uncertain = bool(freeze_backend_on_uncertain)
 
         if self.min_confidence < 0.0:
             self.min_confidence = 0.0
@@ -179,6 +181,9 @@ class OSTrackTracker:
             )
 
         h, w = frame_bgr.shape[:2]
+
+        if self.freeze_backend_on_uncertain and self._uncertain_frames > 0 and self._last_bbox is not None:
+            self._set_backend_state(self._last_bbox)
 
         try:
             out = self._backend_track_fn(frame_bgr)
@@ -279,6 +284,9 @@ class OSTrackTracker:
 
     def _mark_uncertain(self, score: Optional[float], reason: str) -> TrackResult:
         self._uncertain_frames += 1
+        if self.freeze_backend_on_uncertain and self._last_bbox is not None:
+            self._set_backend_state(self._last_bbox)
+
         if self._uncertain_frames >= self.max_uncertain_frames:
             self._initialized = False
             return TrackResult(
@@ -296,6 +304,17 @@ class OSTrackTracker:
             state="UNCERTAIN",
             message=f"{reason} ({self._uncertain_frames}/{self.max_uncertain_frames})",
         )
+
+
+    def _set_backend_state(self, bbox_xyxy: BBox) -> None:
+        if self._backend is None:
+            return
+
+        try:
+            self._backend.state = bbox_xyxy.to_xywh()
+        except Exception:
+            if self.verbose:
+                print("[OSTrackTracker] warning: failed to reset backend state")
 
 
     def _passes_consistency_gate(self, prev_bbox: BBox, new_bbox: BBox) -> bool:
