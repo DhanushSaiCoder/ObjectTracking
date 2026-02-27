@@ -86,6 +86,7 @@ class OSTrackTracker:
         max_area_ratio: float = 4.0,
         max_uncertain_frames: int = 30,
         freeze_backend_on_uncertain: bool = True,
+        max_lost_frames: int = 120,
     ) -> None:
         self.repo_root = Path(repo_root).expanduser().resolve()
         self.tracker_name = tracker_name
@@ -100,6 +101,7 @@ class OSTrackTracker:
         self.max_area_ratio = float(max_area_ratio)
         self.max_uncertain_frames = int(max_uncertain_frames)
         self.freeze_backend_on_uncertain = bool(freeze_backend_on_uncertain)
+        self.max_lost_frames = int(max_lost_frames)
 
         if self.min_confidence < 0.0:
             self.min_confidence = 0.0
@@ -116,6 +118,8 @@ class OSTrackTracker:
 
         if self.max_uncertain_frames < 0:
             self.max_uncertain_frames = 0
+        if self.max_lost_frames < 0:
+            self.max_lost_frames = 0
 
         self._backend = None
         self._backend_initialize_fn = None
@@ -125,6 +129,7 @@ class OSTrackTracker:
         self._last_bbox: Optional[BBox] = None
         self._params = None
         self._uncertain_frames = 0
+        self._lost_frames = 0
 
         self._build_backend()
 
@@ -158,6 +163,7 @@ class OSTrackTracker:
         self._initialized = True
         self._last_bbox = bbox
         self._uncertain_frames = 0
+        self._lost_frames = 0
         return True
 
     def update(self, frame_bgr: np.ndarray) -> TrackResult:
@@ -215,6 +221,7 @@ class OSTrackTracker:
 
         self._last_bbox = bbox
         self._uncertain_frames = 0
+        self._lost_frames = 0
 
         return TrackResult(
             ok=True,
@@ -228,6 +235,7 @@ class OSTrackTracker:
         self._initialized = False
         self._last_bbox = None
         self._uncertain_frames = 0
+        self._lost_frames = 0
 
     @property
     def is_initialized(self) -> bool:
@@ -288,11 +296,24 @@ class OSTrackTracker:
             self._set_backend_state(self._last_bbox)
 
         if self._uncertain_frames >= self.max_uncertain_frames:
+            self._lost_frames += 1
+            if self._lost_frames > self.max_lost_frames:
+                self._initialized = False
+                return TrackResult(
+                    ok=False,
+                    bbox=None,
+                    score=score,
+                    state="LOST",
+                    message=f"{reason} (lost timeout)",
+                )
+
             self._initialized = False
             return TrackResult(
                 ok=False,
                 bbox=None,
                 score=score,
+                state="SEARCHING",
+                message=f"{reason} (searching {self._lost_frames}/{self.max_lost_frames})",
                 state="LOST",
                 message=f"{reason} (uncertain timeout)",
             )

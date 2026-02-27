@@ -148,6 +148,16 @@ def main():
                 if result.score is not None:
                     label = f"TRACK MODE {result.score:.2f}"
                 draw_track(frame, result.bbox, label)
+            elif result.state in ("UNCERTAIN", "SEARCHING"):
+                msg = result.message if result.message else "Target uncertain"
+                color = YELLOW if result.state == "UNCERTAIN" else WHITE
+                cv2.putText(
+                    frame,
+                    f"{result.state}: {msg}",
+                    (10, 30),
+                    FONT,
+                    0.65,
+                    color,
             elif result.state == "UNCERTAIN":
                 msg = result.message if result.message else "Target uncertain"
                 cv2.putText(
