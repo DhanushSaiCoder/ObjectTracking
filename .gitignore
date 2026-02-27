@@ -1,0 +1,8 @@
+*.pt
+*.pth
+*.pth.tar
+*.engine
+*.mp4
+*.webm
+Miniconda3-latest-Linux-x86_64.sh
+output/
