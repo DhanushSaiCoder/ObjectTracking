@@ -122,14 +122,18 @@ class OSTrack(BaseTracker):
                         self.step = False
                         break
 
+        best_score = float(pred_score_map.max().item())
+
         if self.save_all_boxes:
             '''save all predictions'''
             all_boxes = self.map_box_back_batch(pred_boxes * self.params.search_size / resize_factor, resize_factor)
             all_boxes_save = all_boxes.view(-1).tolist()  # (4N, )
             return {"target_bbox": self.state,
+                    "best_score": best_score,
                     "all_boxes": all_boxes_save}
         else:
-            return {"target_bbox": self.state}
+            return {"target_bbox": self.state,
+                    "best_score": best_score}
 
     def map_box_back(self, pred_box: list, resize_factor: float):
         cx_prev, cy_prev = self.state[0] + 0.5 * self.state[2], self.state[1] + 0.5 * self.state[3]
