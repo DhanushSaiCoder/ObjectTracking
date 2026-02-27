@@ -6,3 +6,186 @@
 *.webm
 Miniconda3-latest-Linux-x86_64.sh
 output/
+Miniconda3-latest-Linux-x86_64.sh
+*.pt
+*.pth
+*.pth.tar
+*.engine
+*.mp4
+*.webm
+output/
+checkpoints/
+runs/
+# =========================
+# Python bytecode / caches
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+
+# =========================
+# Native / compiled libs
+# =========================
+*.so
+
+# =========================
+# Build / packaging
+# =========================
+.Python
+build/
+dist/
+downloads/
+develop-eggs/
+eggs/
+.eggs/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# =========================
+# PyInstaller
+# =========================
+*.manifest
+*.spec
+
+# =========================
+# Logs / reports / coverage
+# =========================
+*.log
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# =========================
+# Jupyter / IPython
+# =========================
+.ipynb_checkpoints/
+profile_default/
+ipython_config.py
+
+# =========================
+# Virtual environments
+# =========================
+.env
+.env.*
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# =========================
+# Type checkers / linters
+# =========================
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+cython_debug/
+
+# =========================
+# IDE / editor
+# =========================
+.idea/
+.vscode/
+.spyderproject
+.spyproject
+.ropeproject
+
+# =========================
+# OS files
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# Framework / app-specific
+# =========================
+instance/
+.webassets-cache
+.scrapy
+docs/_build/
+.pybuilder/
+target/
+site/
+
+# =========================
+# Local project files
+# =========================
+lib/train/admin/local.py
+lib/test/evaluation/local.py
+ltr/run_ltr_local.py
+ltr/train_settings/*/debug.py
+pytracking/parameter/*/debug.py
+pytracking/evaluation/local.py
+pytracking/run_local.py
+
+# Generated tracking outputs
+pytracking/networks/
+pytracking/tracking_results/
+pytracking/result_plots/
+
+# =========================
+# ML / model / engine files
+# =========================
+*.pt
+*.pth
+*.pth.tar
+*.ckpt
+*.onnx
+*.engine
+*.trt
+*.weights
+
+# =========================
+# Videos / media outputs
+# =========================
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.webm
+
+# Images / visual outputs if generated
+*.png
+*.jpg
+*.jpeg
+*.bmp
+
+# =========================
+# Project-specific large files
+# =========================
+Miniconda3-latest-Linux-x86_64.sh
+
+# Training / experiment outputs
+output/
+results/
+runs/
+checkpoints/
+experiments/
+
+# Demo/generated files
+demo_app/output.mp4
+demo_app/cars.webm
+demo_app/rtdetr-l.pt
+demo_app/rtdetr-l.engine
+rtdetr-l.pt
