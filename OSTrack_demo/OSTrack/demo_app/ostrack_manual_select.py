@@ -144,7 +144,23 @@ def main():
             result = tracker.update(frame)
 
             if result.ok and result.bbox is not None:
-                draw_track(frame, result.bbox, "TRACK MODE")
+                label = "TRACK MODE"
+                if result.score is not None:
+                    label = f"TRACK MODE {result.score:.2f}"
+                draw_track(frame, result.bbox, label)
+            elif result.state in ("UNCERTAIN", "SEARCHING"):
+                msg = result.message if result.message else "Target uncertain"
+                color = YELLOW if result.state == "UNCERTAIN" else WHITE
+                cv2.putText(
+                    frame,
+                    f"{result.state}: {msg}",
+                    (10, 30),
+                    FONT,
+                    0.65,
+                    color,
+                    2,
+                    cv2.LINE_AA,
+                )
             else:
                 tracker.reset()
                 state.reset_to_select()
