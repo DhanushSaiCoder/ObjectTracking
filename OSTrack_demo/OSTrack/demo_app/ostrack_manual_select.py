@@ -158,6 +158,15 @@ def main():
                     FONT,
                     0.65,
                     color,
+            elif result.state == "UNCERTAIN":
+                msg = result.message if result.message else "Target uncertain"
+                cv2.putText(
+                    frame,
+                    f"UNCERTAIN: {msg}",
+                    (10, 30),
+                    FONT,
+                    0.65,
+                    YELLOW,
                     2,
                     cv2.LINE_AA,
                 )

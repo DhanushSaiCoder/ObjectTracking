@@ -307,12 +307,15 @@ class OSTrackTracker:
                     message=f"{reason} (lost timeout)",
                 )
 
+            self._initialized = False
             return TrackResult(
                 ok=False,
                 bbox=None,
                 score=score,
                 state="SEARCHING",
                 message=f"{reason} (searching {self._lost_frames}/{self.max_lost_frames})",
+                state="LOST",
+                message=f"{reason} (uncertain timeout)",
             )
 
         return TrackResult(
