@@ -69,7 +69,7 @@ def main():
         verbose=True,
     )
 
-    cap = cv2.VideoCapture("output.mp4")
+    cap = cv2.VideoCapture("drone.mp4")
     
     src_fps = cap.get(cv2.CAP_PROP_FPS)
     if src_fps <= 1e-3:

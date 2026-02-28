@@ -80,13 +80,13 @@ class OSTrackTracker:
         min_box_area: float = 25.0,
         pad_ratio: float = 0.03,
         verbose: bool = False,
-        min_confidence: float = 0.60,
+        min_confidence: float = 0.30,
         max_center_distance_factor: float = 2.0,
         min_area_ratio: float = 0.25,
         max_area_ratio: float = 4.0,
         max_uncertain_frames: int = 30,
         freeze_backend_on_uncertain: bool = True,
-        max_lost_frames: int = 120,
+        max_lost_frames: int = 360,
     ) -> None:
         self.repo_root = Path(repo_root).expanduser().resolve()
         self.tracker_name = tracker_name
