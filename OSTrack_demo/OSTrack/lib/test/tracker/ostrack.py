@@ -70,6 +70,29 @@ class OSTrack(BaseTracker):
             all_boxes_save = info['init_bbox'] * self.cfg.MODEL.NUM_OBJECT_QUERIES
             return {"all_boxes": all_boxes_save}
 
+    def update_template(self, image, bbox_xywh):
+        """Update the template features with a new, trusted bbox (x, y, w, h)."""
+        try:
+            z_patch_arr, resize_factor, z_amask_arr = sample_target(
+                image,
+                bbox_xywh,
+                self.params.template_factor,
+                output_sz=self.params.template_size,
+            )
+            self.z_patch_arr = z_patch_arr
+            template = self.preprocessor.process(z_patch_arr, z_amask_arr)
+            with torch.no_grad():
+                self.z_dict1 = template
+
+            if self.cfg.MODEL.BACKBONE.CE_LOC:
+                template_bbox = self.transform_bbox_to_crop(
+                    bbox_xywh, resize_factor, template.tensors.device
+                ).squeeze(1)
+                self.box_mask_z = generate_mask_cond(self.cfg, 1, template.tensors.device, template_bbox)
+            return True
+        except Exception:
+            return False
+
     def track(self, image, info: dict = None):
         H, W, _ = image.shape
         self.frame_id += 1

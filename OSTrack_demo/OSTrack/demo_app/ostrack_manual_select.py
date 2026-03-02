@@ -67,10 +67,48 @@ def main():
         param_name="vitb_384_mae_ce_32x4_ep300",
         dataset_name="demo",
         verbose=True,
+        min_confidence=0.30,
+        max_center_distance_factor=3.5,
+        min_area_ratio=0.25,
+        max_area_ratio=3.8,
+        consistency_relax_score=0.60,
+        consistency_relax_factor=2.0,
+        consistency_relax_area_margin=0.20,
+        max_uncertain_frames=25,
+        freeze_backend_on_uncertain=True,
+        max_lost_frames=180,
+        verify_interval_frames=30,
+        verify_search_frames=3,
+        verify_score_threshold=0.50,
+        verify_score_margin=0.04,
+        min_identity_similarity=0.28,
+        anchor_min_similarity=0.30,
+        appearance_update_interval_frames=10,
+        appearance_update_trust_frames=8,
+        appearance_update_min_score=0.55,
+        appearance_update_max_motion_ratio=0.35,
+        appearance_update_min_similarity=0.35,
+        appearance_update_alpha=0.2,
+        appearance_update_min_sharpness=0.0,
+        update_backend_template_on_appearance=False,
+        long_update_interval_frames=20,
+        long_update_min_score=0.6,
+        long_update_min_similarity=0.40,
+        long_update_alpha_base=0.1,
     )
 
     cap = cv2.VideoCapture("drone.mp4")
-    
+
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    output = cv2.VideoWriter(
+        f"outputs/{time.perf_counter()}.mp4",
+        cv2.VideoWriter_fourcc(*'MP4V'),
+        30,
+        (width,height)
+    )
+
     src_fps = cap.get(cv2.CAP_PROP_FPS)
     if src_fps <= 1e-3:
         src_fps = 25.0  # fallback if video metadata is bad
@@ -175,6 +213,18 @@ def main():
                     cv2.LINE_AA,
                 )
 
+            if tracker.consume_appearance_update_flag():
+                cv2.putText(
+                    frame,
+                    "updated",
+                    (10, 55),
+                    FONT,
+                    0.7,
+                    GREEN,
+                    2,
+                    cv2.LINE_AA,
+                )
+
         # common overlays
         cv2.putText(
             frame,
@@ -189,6 +239,8 @@ def main():
 
         cv2.imshow(window_name, frame)
         
+        output.write(frame)
+
         key = cv2.waitKey(10) & 0xFF
         
         # key = cv2.waitKey(frame_delay_ms) & 0xFF
