@@ -84,35 +84,34 @@ def main():
         verify_score_margin=0.02,  # Probe must beat current score by this margin; increase to avoid switching, decrease to switch easier.
         min_identity_similarity=0.28,  # Identity gate vs stored appearance; increase to be stricter, decrease to allow more changes.
         anchor_min_similarity=0.25,  # Anchor similarity floor for updating memory; increase to prevent drift, decrease to adapt faster.
-        appearance_update_interval_frames=15,  # Min frames between appearance updates; increase to update slower, decrease to update faster.
-        appearance_update_trust_frames=10,  # Consecutive trusted frames before update; increase to be conservative, decrease to update sooner.
+        appearance_update_interval_frames=7,  # Min frames between appearance updates; increase to update slower, decrease to update faster.
+        appearance_update_trust_frames=7,  # Consecutive trusted frames before update; increase to be conservative, decrease to update sooner.
         appearance_update_min_score=0.5,  # Min score to update appearance; increase to update only high confidence, decrease to update more.
         appearance_update_max_motion_ratio=0.65,  # Max center motion ratio to allow update; decrease to avoid motion blur, increase to allow motion.
-        appearance_update_min_similarity=0.37,  # Similarity to recent memory required to update; increase to prevent drift, decrease to adapt.
-        appearance_update_alpha=0.23,  # EMA rate for recent appearance; increase to adapt faster, decrease to be stable.
+        appearance_update_min_similarity=0.3,  # Similarity to recent memory required to update; increase to prevent drift, decrease to adapt.
+        appearance_update_alpha=0.3,  # EMA rate for recent appearance; increase to adapt faster, decrease to be stable.
         appearance_update_min_sharpness=0.0,  # Min sharpness to update; increase to avoid blur updates, decrease to allow more updates.
         update_backend_template_on_appearance=False,  # If True, refresh tracker template when memory updates; True adapts, False keeps stable.
-        long_update_interval_frames=20,  # Min frames between long-term updates; increase to slow drift, decrease to adapt faster.
+        long_update_interval_frames=7,  # Min frames between long-term updates; increase to slow drift, decrease to adapt faster.
         long_update_min_score=0.55,  # Min score to update long-term memory; increase to be strict, decrease to adapt more.
         long_update_min_similarity=0.37,  # Similarity floor for long-term update; increase to prevent drift, decrease to adapt.
         long_update_alpha_base=0.06,  # Base EMA rate for long-term memory; increase to adapt faster, decrease to be stable.
     )
 
-    cap = cv2.VideoCapture("drone.mp4")
+    cap = cv2.VideoCapture("./assets/two_drones.mp4")
 
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    src_fps = cap.get(cv2.CAP_PROP_FPS)
+    if src_fps <= 1e-3:
+        src_fps = 30.0  # fallback if video metadata is bad
 
     output = cv2.VideoWriter(
         f"outputs/{time.perf_counter()}.mp4",
         cv2.VideoWriter_fourcc(*'MP4V'),
-        30,
+        src_fps,
         (width,height)
     )
-
-    src_fps = cap.get(cv2.CAP_PROP_FPS)
-    if src_fps <= 1e-3:
-        src_fps = 25.0  # fallback if video metadata is bad
 
     frame_delay_ms = max(1, int(1000 / src_fps))
     print(f"Source FPS: {src_fps:.2f}, frame delay: {frame_delay_ms} ms")
@@ -238,9 +237,7 @@ def main():
         
         output.write(frame)
 
-        key = cv2.waitKey(10) & 0xFF
-        
-        # key = cv2.waitKey(frame_delay_ms) & 0xFF
+        key = cv2.waitKey(frame_delay_ms) & 0xFF
         if key == ord("q"):
             break
 
