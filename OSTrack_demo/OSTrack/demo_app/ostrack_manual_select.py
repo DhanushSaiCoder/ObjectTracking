@@ -27,20 +27,20 @@ class AppState:
         self.last_frame = None
 
 
-def draw_track(frame, bbox, label="TRACK MODE"):
+def draw_track(frame, bbox, label="TRACK MODE", color=GREEN):
     x1 = int(bbox.x1)
     y1 = int(bbox.y1)
     x2 = int(bbox.x2)
     y2 = int(bbox.y2)
 
-    cv2.rectangle(frame, (x1, y1), (x2, y2), GREEN, 3)
+    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 3)
     cv2.putText(
         frame,
         label,
         (x1, y1 - 10 if y1 > 14 else y1 + 22),
         FONT,
         0.7,
-        GREEN,
+        color,
         2,
         cv2.LINE_AA,
     )
@@ -185,7 +185,9 @@ def main():
                 label = "TRACK MODE"
                 if result.score is not None:
                     label = f"TRACK MODE {result.score:.2f}"
-                draw_track(frame, result.bbox, label)
+                appearance_updated = tracker.consume_appearance_update_flag()
+                box_color = YELLOW if appearance_updated else GREEN
+                draw_track(frame, result.bbox, label, box_color)
             elif result.state in ("UNCERTAIN", "SEARCHING"):
                 msg = result.message if result.message else "Target uncertain"
                 color = YELLOW if result.state == "UNCERTAIN" else WHITE
@@ -209,18 +211,6 @@ def main():
                     FONT,
                     0.7,
                     RED,
-                    2,
-                    cv2.LINE_AA,
-                )
-
-            if tracker.consume_appearance_update_flag():
-                cv2.putText(
-                    frame,
-                    "updated",
-                    (10, 55),
-                    FONT,
-                    0.7,
-                    GREEN,
                     2,
                     cv2.LINE_AA,
                 )
