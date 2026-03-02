@@ -188,6 +188,7 @@ class OSTrackTracker:
         self._lost_frames = 0
         self._frame_count = 0
         self._verify_remaining = 0
+        self._verification_active = False
 
         self._init_bbox: Optional[BBox] = None
         self._anchor_hist: Optional[np.ndarray] = None
@@ -253,6 +254,7 @@ class OSTrackTracker:
             return TrackResult(False, None, None, "LOST", "Empty frame")
 
         self._appearance_updated = False
+        self._verification_active = False
         h, w = frame_bgr.shape[:2]
 
         prev_bbox = self._last_bbox
@@ -288,6 +290,7 @@ class OSTrackTracker:
 
         self._frame_count += 1
         if self._should_verify(score):
+            self._verification_active = True
             verified = self._run_identity_verification(frame_bgr, bbox, score)
             if verified is not None:
                 return verified
@@ -317,6 +320,7 @@ class OSTrackTracker:
         self._long_last_update_frame = -1
         self._appearance_updated = False
         self._trusted_frames = 0
+        self._verification_active = False
 
     @property
     def is_initialized(self) -> bool:
@@ -603,6 +607,9 @@ class OSTrackTracker:
             self._appearance_updated = False
             return True
         return False
+
+    def is_verifying(self) -> bool:
+        return self._verification_active
 
     def _maybe_update_appearance(
         self,
