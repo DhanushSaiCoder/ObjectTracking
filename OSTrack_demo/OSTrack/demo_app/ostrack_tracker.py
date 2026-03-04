@@ -76,17 +76,17 @@ class OSTrackTracker:
         min_confidence: float = 0.25,  # Score gate; increase to reject weak detections, decrease to be permissive.
         max_center_distance_factor: float = 3.5,  # Motion gate; increase for fast motion, decrease to curb drift.
         min_area_ratio: float = 0.20,  # Scale lower bound; increase to reject shrink jumps, decrease for rapid scale-down.
-        max_area_ratio: float = 4.5,  # Scale upper bound; decrease to reject growth jumps, increase for rapid scale-up.
+        max_area_ratio: float =1.5,  # Scale upper bound; decrease to reject growth jumps, increase for rapid scale-up.
         consistency_relax_score: float = 0.6,  # If score >= this, relax motion/scale gates; increase to relax less.
         consistency_relax_factor: float = 1.8,  # Extra motion allowance when relaxed; increase for shaky cam, decrease to tighten.
         consistency_relax_area_margin: float = 0.15,  # Extra scale tolerance when relaxed; increase for scale volatility.
         max_uncertain_frames: int = 30,  # UNCERTAIN frames before SEARCHING; increase to wait longer, decrease to search sooner.
         freeze_backend_on_uncertain: bool = True,  # Hold backend state while uncertain; True stabilizes, False allows motion.
         max_lost_frames: int = 360,  # SEARCHING frames before LOST; increase to keep trying, decrease to give up sooner.
-        verify_interval_frames: int = 60,  # Periodic verification interval; decrease to verify more often.
-        verify_search_frames: int = 3,  # Verification attempts per trigger; increase to probe longer.
-        verify_score_threshold: float = 0.45,  # Trigger verify when score <= this; increase to verify more often.
-        verify_score_margin: float = 0.05,  # Probe must beat current score by this margin; increase to avoid switching.
+        verify_interval_frames: int = 40,  # Periodic verification interval; decrease to verify more often.
+        verify_search_frames: int = 4,  # Verification attempts per trigger; increase to probe longer.
+        verify_score_threshold: float = 0.35,  # Trigger verify when score <= this; increase to verify more often.
+        verify_score_margin: float = 0.03,  # Probe must beat current score by this margin; increase to avoid switching.
         min_identity_similarity: float = 0.1,  # Identity gate vs memory; increase to be strict, decrease to allow change.
         anchor_min_similarity: float = 0.25,  # Anchor similarity floor for updates; increase to prevent drift.
         appearance_update_interval_frames: int = 10,  # Min frames between updates; increase to update slower.
@@ -101,6 +101,13 @@ class OSTrackTracker:
         long_update_min_score: float = 0.6,  # Min score to update long-term memory; increase to be strict.
         long_update_min_similarity: float = 0.25,  # Similarity floor for long-term update; increase to prevent drift.
         long_update_alpha_base: float = 0.1,  # Base EMA rate for long-term memory; increase to adapt faster.
+        low_similarity_grace_frames: int = 3,  # Frames to tolerate low similarity before forcing SEARCHING.
+        search_grid_step_factor: float = 1.0,  # Grid probe step as fraction of bbox size during SEARCHING.
+        search_box_scale: float = 1.5,  # Scale factor for probe bbox size during SEARCHING.
+        search_max_probes: int = 7,  # Max probe attempts per SEARCHING frame.
+        search_min_similarity: float = 0.30,  # Min identity similarity to accept a probe.
+        search_min_score: float = 0.3,  # Min tracker score to accept a probe.
+        search_interval_frames: int = 2,  # Run SEARCHING probes every N frames (1 = every frame).
     ) -> None:
         self.repo_root = Path(repo_root).expanduser().resolve()
         self.tracker_name = tracker_name
@@ -138,6 +145,13 @@ class OSTrackTracker:
         self.long_update_min_score = float(long_update_min_score)
         self.long_update_min_similarity = float(long_update_min_similarity)
         self.long_update_alpha_base = float(long_update_alpha_base)
+        self.low_similarity_grace_frames = int(low_similarity_grace_frames)
+        self.search_grid_step_factor = float(search_grid_step_factor)
+        self.search_box_scale = float(search_box_scale)
+        self.search_max_probes = int(search_max_probes)
+        self.search_min_similarity = float(search_min_similarity)
+        self.search_min_score = float(search_min_score)
+        self.search_interval_frames = int(search_interval_frames)
 
         self.min_confidence = min(max(self.min_confidence, 0.0), 1.0)
         self.verify_score_threshold = min(max(self.verify_score_threshold, 0.0), 1.0)
@@ -155,6 +169,13 @@ class OSTrackTracker:
         self.long_update_min_score = min(max(self.long_update_min_score, 0.0), 1.0)
         self.long_update_min_similarity = min(max(self.long_update_min_similarity, 0.0), 1.0)
         self.long_update_alpha_base = min(max(self.long_update_alpha_base, 0.0), 1.0)
+        self.search_grid_step_factor = max(self.search_grid_step_factor, 0.0)
+        if self.search_box_scale <= 0.0:
+            self.search_box_scale = 1.0
+        self.search_min_similarity = min(max(self.search_min_similarity, 0.0), 1.0)
+        self.search_min_score = min(max(self.search_min_score, 0.0), 1.0)
+        if self.search_interval_frames < 1:
+            self.search_interval_frames = 1
 
         if self.max_center_distance_factor <= 0.0:
             self.max_center_distance_factor = 1.0
@@ -166,6 +187,10 @@ class OSTrackTracker:
             self.max_uncertain_frames = 0
         if self.max_lost_frames < 0:
             self.max_lost_frames = 0
+        if self.low_similarity_grace_frames < 0:
+            self.low_similarity_grace_frames = 0
+        if self.search_max_probes < 0:
+            self.search_max_probes = 0
         if self.verify_interval_frames < 1:
             self.verify_interval_frames = 1
         if self.verify_search_frames < 0:
@@ -186,6 +211,8 @@ class OSTrackTracker:
         self._params = None
         self._uncertain_frames = 0
         self._lost_frames = 0
+        self._low_similarity_frames = 0
+        self._search_frame_count = 0
         self._frame_count = 0
         self._verify_remaining = 0
         self._verification_active = False
@@ -241,6 +268,8 @@ class OSTrackTracker:
         self._trusted_frames = 0
         self._uncertain_frames = 0
         self._lost_frames = 0
+        self._low_similarity_frames = 0
+        self._search_frame_count = 0
         self._frame_count = 0
         self._verify_remaining = 0
         return True
@@ -259,7 +288,17 @@ class OSTrackTracker:
 
         prev_bbox = self._last_bbox
 
-        if self.freeze_backend_on_uncertain and self._uncertain_frames > 0 and self._last_bbox is not None:
+        is_searching = self._uncertain_frames > 0 and self._uncertain_frames >= self.max_uncertain_frames
+        if is_searching:
+            if not self._should_run_search():
+                return self._mark_uncertain(None, "Searching (cooldown)")
+            search_result = self._run_search(frame_bgr)
+            if search_result is not None:
+                return search_result
+        else:
+            self._search_frame_count = 0
+
+        if self.freeze_backend_on_uncertain and self._uncertain_frames > 0 and not is_searching and self._last_bbox is not None:
             self._set_backend_state(self._last_bbox)
 
         try:
@@ -270,23 +309,31 @@ class OSTrackTracker:
 
         bbox_xywh, score = self._parse_backend_output(out)
         if bbox_xywh is None:
+            self._low_similarity_frames = 0
             return self._mark_uncertain(score, "No bbox from tracker")
 
         x, y, bw, bh = bbox_xywh
         if bw <= 1.0 or bh <= 1.0 or (bw * bh) < self.min_box_area:
+            self._low_similarity_frames = 0
             return self._mark_uncertain(score, "Degenerate bbox")
 
         bbox = BBox(x, y, x + bw, y + bh).clip(w, h)
 
         if score is not None and score < self.min_confidence:
+            self._low_similarity_frames = 0
             return self._mark_uncertain(score, f"Low confidence: {score:.3f} < {self.min_confidence:.3f}")
 
         if self._last_bbox is not None and not self._passes_consistency_gate(self._last_bbox, bbox, score):
+            self._low_similarity_frames = 0
             return self._mark_uncertain(score, "Inconsistent jump (possible drift)")
 
         similarity = self._compute_identity_similarity(frame_bgr, bbox)
         if similarity is not None and similarity < self.min_identity_similarity:
+            self._low_similarity_frames += 1
+            if self._low_similarity_frames >= self.low_similarity_grace_frames:
+                self._force_searching()
             return self._mark_uncertain(score, f"Low identity similarity: {similarity:.3f}")
+        self._low_similarity_frames = 0
 
         self._frame_count += 1
         if self._should_verify(score):
@@ -300,6 +347,8 @@ class OSTrackTracker:
         self._last_bbox = bbox
         self._uncertain_frames = 0
         self._lost_frames = 0
+        self._low_similarity_frames = 0
+        self._search_frame_count = 0
 
         return TrackResult(True, bbox, score, "TRACKING", "OK")
 
@@ -308,6 +357,8 @@ class OSTrackTracker:
         self._last_bbox = None
         self._uncertain_frames = 0
         self._lost_frames = 0
+        self._low_similarity_frames = 0
+        self._search_frame_count = 0
         self._frame_count = 0
         self._verify_remaining = 0
         self._init_bbox = None
@@ -366,10 +417,11 @@ class OSTrackTracker:
 
     def _mark_uncertain(self, score: Optional[float], reason: str) -> TrackResult:
         self._uncertain_frames += 1
-        if self.freeze_backend_on_uncertain and self._last_bbox is not None:
+        is_searching = self._uncertain_frames > 0 and self._uncertain_frames >= self.max_uncertain_frames
+        if self.freeze_backend_on_uncertain and self._last_bbox is not None and not is_searching:
             self._set_backend_state(self._last_bbox)
 
-        if self._uncertain_frames >= self.max_uncertain_frames:
+        if is_searching:
             self._lost_frames += 1
             if self._lost_frames > self.max_lost_frames:
                 self._initialized = False
@@ -518,6 +570,7 @@ class OSTrackTracker:
             self._last_bbox = probe_bbox
             self._uncertain_frames = 0
             self._lost_frames = 0
+            self._low_similarity_frames = 0
             return TrackResult(
                 True,
                 probe_bbox,
@@ -526,7 +579,108 @@ class OSTrackTracker:
                 "Re-identified target during verification",
             )
 
+        self._low_similarity_frames += 1
+        if self._low_similarity_frames >= self.low_similarity_grace_frames:
+            self._force_searching()
         return self._mark_uncertain(tracked_score, "Verification mismatch")
+
+    def _force_searching(self) -> None:
+        if self.max_uncertain_frames < 0:
+            self.max_uncertain_frames = 0
+        self._uncertain_frames = max(self._uncertain_frames, self.max_uncertain_frames)
+        self._lost_frames = max(self._lost_frames, 1)
+
+    def _run_search(self, frame_bgr: np.ndarray) -> Optional[TrackResult]:
+        if self._backend is None:
+            return None
+        if self.search_max_probes <= 0:
+            return self._mark_uncertain(None, "Searching (probe miss)")
+
+        h, w = frame_bgr.shape[:2]
+        seeds: list[BBox] = []
+        if self._recent_bbox is not None:
+            seeds.append(self._recent_bbox)
+        if self._long_bbox is not None:
+            seeds.append(self._long_bbox)
+        if self._init_bbox is not None:
+            seeds.append(self._init_bbox)
+
+        if not seeds:
+            return self._mark_uncertain(None, "Searching (probe miss)")
+
+        offsets_primary = [(0.0, 0.0), (1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)]
+        best_bbox: Optional[BBox] = None
+        best_score: Optional[float] = None
+        best_similarity: Optional[float] = None
+        probes = 0
+
+        for seed_index, seed in enumerate(seeds):
+            offsets = offsets_primary if seed_index == 0 else [(0.0, 0.0)]
+            step_x = seed.w * self.search_grid_step_factor
+            step_y = seed.h * self.search_grid_step_factor
+            bw = seed.w * self.search_box_scale
+            bh = seed.h * self.search_box_scale
+            if bw <= 1.0 or bh <= 1.0:
+                continue
+
+            seed_cx = 0.5 * (seed.x1 + seed.x2)
+            seed_cy = 0.5 * (seed.y1 + seed.y2)
+
+            for ox, oy in offsets:
+                if probes >= self.search_max_probes:
+                    break
+
+                cx = seed_cx + ox * step_x
+                cy = seed_cy + oy * step_y
+                candidate = BBox(cx - 0.5 * bw, cy - 0.5 * bh, cx + 0.5 * bw, cy + 0.5 * bh).clip(w, h)
+                if candidate.w <= 1.0 or candidate.h <= 1.0 or candidate.area < self.min_box_area:
+                    continue
+
+                probes += 1
+                probe = self._probe_state(frame_bgr, candidate)
+                if probe is None:
+                    continue
+                probe_bbox, probe_score = probe
+                if probe_bbox.area < self.min_box_area:
+                    continue
+                score_floor = max(self.search_min_score, self.min_confidence)
+                if probe_score is None or probe_score < score_floor:
+                    continue
+
+                similarity = self._compute_anchor_similarity(frame_bgr, probe_bbox)
+                if similarity is None:
+                    similarity = self._compute_identity_similarity(frame_bgr, probe_bbox)
+                if similarity is None or similarity < self.search_min_similarity:
+                    continue
+
+                if best_similarity is None or similarity > best_similarity or (
+                    similarity == best_similarity and best_score is not None and probe_score > best_score
+                ):
+                    best_similarity = similarity
+                    best_score = probe_score
+                    best_bbox = probe_bbox
+
+            if probes >= self.search_max_probes:
+                break
+
+        if best_bbox is not None and best_score is not None:
+            self._set_backend_state(best_bbox)
+            self._last_bbox = best_bbox
+            self._uncertain_frames = 0
+            self._lost_frames = 0
+            self._low_similarity_frames = 0
+            return TrackResult(True, best_bbox, best_score, "TRACKING", "Reacquired in search")
+
+        return self._mark_uncertain(None, "Searching (probe miss)")
+
+    def _should_run_search(self) -> bool:
+        if self.search_interval_frames <= 1:
+            return True
+        self._search_frame_count += 1
+        if self._search_frame_count >= self.search_interval_frames:
+            self._search_frame_count = 0
+            return True
+        return False
 
     def _probe_state(self, frame_bgr: np.ndarray, state_bbox: BBox) -> Optional[tuple[BBox, Optional[float]]]:
         if self._backend is None:
@@ -601,6 +755,14 @@ class OSTrackTracker:
         if sim_long is None:
             return max(sim_anchor, sim_recent)
         return max(sim_anchor, sim_recent, sim_long)
+
+    def _compute_anchor_similarity(self, frame_bgr: np.ndarray, bbox: BBox) -> Optional[float]:
+        if self._anchor_hist is None:
+            return None
+        curr_hist = self._compute_bbox_hist(frame_bgr, bbox)
+        if curr_hist is None:
+            return None
+        return self._hist_similarity(self._anchor_hist, curr_hist)
 
     def consume_appearance_update_flag(self) -> bool:
         if self._appearance_updated:

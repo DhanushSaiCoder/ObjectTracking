@@ -25,4 +25,4 @@ def convert_webm_to_mp4_cv2(input_file, output_file, fps=30):
     out.release()
     print("Done")
 
-convert_webm_to_mp4_cv2("two_drones.webm", "../assets/two_drones.mp4")
+convert_webm_to_mp4_cv2("war_planes.webm", "../assets/war_planes.mp4")

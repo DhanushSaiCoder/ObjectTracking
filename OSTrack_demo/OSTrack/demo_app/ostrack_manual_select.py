@@ -69,9 +69,9 @@ def main():
         dataset_name="demo",
         verbose=True,
         min_confidence=0.3,  # Tracker score gate; increase to reject weak detections, decrease to be more permissive.
-        max_center_distance_factor=4.5,  # Motion gate (center jump vs prev diag); increase for fast motion/shaky cam, decrease to curb drift.
+        max_center_distance_factor=1.5,  # Motion gate (center jump vs prev diag); increase for fast motion/shaky cam, decrease to curb drift.
         min_area_ratio=0.20,  # Scale gate lower bound (new/prev area); increase to reject shrink jumps, decrease for rapid scale-down.
-        max_area_ratio=4.5,  # Scale gate upper bound; decrease to reject sudden growth, increase for rapid scale-up/zoom.
+        max_area_ratio=1.5,  # Scale gate upper bound; decrease to reject sudden growth, increase for rapid scale-up/zoom.
         consistency_relax_score=0.55,  # If score >= this, relax motion/scale gates; increase to relax less often, decrease to relax more often.
         consistency_relax_factor=4.5,  # Multiplier for allowed center jump when relaxed; increase for handheld motion, decrease to tighten.
         consistency_relax_area_margin=0.30,  # Extra tolerance on area ratio when relaxed; increase for scale volatility, decrease to tighten.
@@ -79,9 +79,9 @@ def main():
         freeze_backend_on_uncertain=True,  # Hold tracker state when uncertain; True stabilizes, False allows more motion.
         max_lost_frames=600,  # Frames allowed in SEARCHING before LOST; increase to keep trying, decrease to give up sooner.
         verify_interval_frames=20,  # Periodic verification interval; decrease to verify more often, increase to reduce verify overhead.
-        verify_search_frames=3,  # Verification attempts per trigger; increase to probe longer, decrease to be lighter.
-        verify_score_threshold=0.60,  # Trigger verify when score <= this; increase to verify more often, decrease to verify less.
-        verify_score_margin=0.02,  # Probe must beat current score by this margin; increase to avoid switching, decrease to switch easier.
+        verify_search_frames=4,  # Verification attempts per trigger; increase to probe longer, decrease to be lighter.
+        verify_score_threshold=0.35,  # Trigger verify when score <= this; increase to verify more often, decrease to verify less.
+        verify_score_margin=0.03,  # Probe must beat current score by this margin; increase to avoid switching, decrease to switch easier.
         min_identity_similarity=0.28,  # Identity gate vs stored appearance; increase to be stricter, decrease to allow more changes.
         anchor_min_similarity=0.25,  # Anchor similarity floor for updating memory; increase to prevent drift, decrease to adapt faster.
         appearance_update_interval_frames=7,  # Min frames between appearance updates; increase to update slower, decrease to update faster.
@@ -96,9 +96,16 @@ def main():
         long_update_min_score=0.55,  # Min score to update long-term memory; increase to be strict, decrease to adapt more.
         long_update_min_similarity=0.37,  # Similarity floor for long-term update; increase to prevent drift, decrease to adapt.
         long_update_alpha_base=0.06,  # Base EMA rate for long-term memory; increase to adapt faster, decrease to be stable.
+        low_similarity_grace_frames=3,  # Low-sim frames before forcing SEARCHING; increase to reduce flicker.
+        search_grid_step_factor=1.0,  # Grid probe step as fraction of bbox size; lower to reduce jumps.
+        search_box_scale=2.0,  # Scale probe bbox size to expand search crop.
+        search_max_probes=4,  # Max probes per SEARCHING frame; reduce if too slow.
+        search_min_similarity=0.50,  # Min identity similarity to accept a probe.
+        search_min_score=0.4,  # Min tracker score to accept a probe.
+        search_interval_frames=6,  # Run SEARCHING probes every N frames (1 = every frame).
     )
 
-    cap = cv2.VideoCapture("./assets/two_drones.mp4")
+    cap = cv2.VideoCapture("./assets/air_show.mp4")
 
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
