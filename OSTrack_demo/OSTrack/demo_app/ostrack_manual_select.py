@@ -120,7 +120,7 @@ def main():
         search_box_scale=2.0,  # Scale probe bbox size to expand search crop.
         search_max_probes=4,  # Max probes per SEARCHING frame; reduce if too slow.
         search_min_similarity=0.3,  # Min identity similarity to accept a probe.
-        search_min_score=0.4,  # Min tracker score to accept a probe.
+        search_min_score=0.3,  # Min tracker score to accept a probe.
         search_interval_frames=6,  # Run SEARCHING probes every N frames (1 = every frame).
         search_backoff_enabled=True,  # Expand search area and reduce search frequency on probe misses.
         search_backoff_scale_factor=1.5,  # Scale multiplier per backoff level.
@@ -128,7 +128,7 @@ def main():
         search_backoff_max_interval=12,  # Max interval between search probes.
     )
 
-    cap = cv2.VideoCapture("./assets/drone.mp4")
+    cap = cv2.VideoCapture("./assets/person_sim.mp4")
 
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
