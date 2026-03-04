@@ -108,6 +108,10 @@ class OSTrackTracker:
         search_min_similarity: float = 0.30,  # Min identity similarity to accept a probe.
         search_min_score: float = 0.3,  # Min tracker score to accept a probe.
         search_interval_frames: int = 2,  # Run SEARCHING probes every N frames (1 = every frame).
+        search_backoff_enabled: bool = False,  # If True, expand search area and reduce search frequency on misses.
+        search_backoff_scale_factor: float = 1.25,  # Multiplicative scale per backoff level.
+        search_backoff_max_scale: float = 3.0,  # Cap on search box scale during backoff.
+        search_backoff_max_interval: int = 8,  # Cap on search interval frames during backoff.
     ) -> None:
         self.repo_root = Path(repo_root).expanduser().resolve()
         self.tracker_name = tracker_name
@@ -152,6 +156,10 @@ class OSTrackTracker:
         self.search_min_similarity = float(search_min_similarity)
         self.search_min_score = float(search_min_score)
         self.search_interval_frames = int(search_interval_frames)
+        self.search_backoff_enabled = bool(search_backoff_enabled)
+        self.search_backoff_scale_factor = float(search_backoff_scale_factor)
+        self.search_backoff_max_scale = float(search_backoff_max_scale)
+        self.search_backoff_max_interval = int(search_backoff_max_interval)
 
         self.min_confidence = min(max(self.min_confidence, 0.0), 1.0)
         self.verify_score_threshold = min(max(self.verify_score_threshold, 0.0), 1.0)
@@ -176,6 +184,16 @@ class OSTrackTracker:
         self.search_min_score = min(max(self.search_min_score, 0.0), 1.0)
         if self.search_interval_frames < 1:
             self.search_interval_frames = 1
+        if self.search_backoff_scale_factor < 1.0:
+            self.search_backoff_scale_factor = 1.0
+        if self.search_backoff_max_scale <= 0.0:
+            self.search_backoff_max_scale = self.search_box_scale
+        if self.search_backoff_max_scale < self.search_box_scale:
+            self.search_backoff_max_scale = self.search_box_scale
+        if self.search_backoff_max_interval < 1:
+            self.search_backoff_max_interval = self.search_interval_frames
+        if self.search_backoff_max_interval < self.search_interval_frames:
+            self.search_backoff_max_interval = self.search_interval_frames
 
         if self.max_center_distance_factor <= 0.0:
             self.max_center_distance_factor = 1.0
@@ -213,6 +231,7 @@ class OSTrackTracker:
         self._lost_frames = 0
         self._low_similarity_frames = 0
         self._search_frame_count = 0
+        self._search_backoff_level = 0
         self._frame_count = 0
         self._verify_remaining = 0
         self._verification_active = False
@@ -227,6 +246,7 @@ class OSTrackTracker:
         self._long_last_update_frame = -1
         self._appearance_updated = False
         self._trusted_frames = 0
+        self._search_hint_bbox: Optional[BBox] = None
 
         self._build_backend()
 
@@ -266,10 +286,12 @@ class OSTrackTracker:
         self._long_last_update_frame = 0
         self._appearance_updated = False
         self._trusted_frames = 0
+        self._search_hint_bbox = None
         self._uncertain_frames = 0
         self._lost_frames = 0
         self._low_similarity_frames = 0
         self._search_frame_count = 0
+        self._search_backoff_level = 0
         self._frame_count = 0
         self._verify_remaining = 0
         return True
@@ -290,6 +312,7 @@ class OSTrackTracker:
 
         is_searching = self._uncertain_frames > 0 and self._uncertain_frames >= self.max_uncertain_frames
         if is_searching:
+            self._update_search_hint(frame_bgr)
             if not self._should_run_search():
                 return self._mark_uncertain(None, "Searching (cooldown)")
             search_result = self._run_search(frame_bgr)
@@ -297,6 +320,8 @@ class OSTrackTracker:
                 return search_result
         else:
             self._search_frame_count = 0
+            self._search_backoff_level = 0
+            self._search_hint_bbox = None
 
         if self.freeze_backend_on_uncertain and self._uncertain_frames > 0 and not is_searching and self._last_bbox is not None:
             self._set_backend_state(self._last_bbox)
@@ -349,6 +374,8 @@ class OSTrackTracker:
         self._lost_frames = 0
         self._low_similarity_frames = 0
         self._search_frame_count = 0
+        self._search_backoff_level = 0
+        self._search_hint_bbox = None
 
         return TrackResult(True, bbox, score, "TRACKING", "OK")
 
@@ -359,6 +386,7 @@ class OSTrackTracker:
         self._lost_frames = 0
         self._low_similarity_frames = 0
         self._search_frame_count = 0
+        self._search_backoff_level = 0
         self._frame_count = 0
         self._verify_remaining = 0
         self._init_bbox = None
@@ -372,6 +400,7 @@ class OSTrackTracker:
         self._appearance_updated = False
         self._trusted_frames = 0
         self._verification_active = False
+        self._search_hint_bbox = None
 
     @property
     def is_initialized(self) -> bool:
@@ -589,6 +618,8 @@ class OSTrackTracker:
             self.max_uncertain_frames = 0
         self._uncertain_frames = max(self._uncertain_frames, self.max_uncertain_frames)
         self._lost_frames = max(self._lost_frames, 1)
+        self._search_backoff_level = 0
+        self._search_frame_count = 0
 
     def _run_search(self, frame_bgr: np.ndarray) -> Optional[TrackResult]:
         if self._backend is None:
@@ -618,8 +649,9 @@ class OSTrackTracker:
             offsets = offsets_primary if seed_index == 0 else [(0.0, 0.0)]
             step_x = seed.w * self.search_grid_step_factor
             step_y = seed.h * self.search_grid_step_factor
-            bw = seed.w * self.search_box_scale
-            bh = seed.h * self.search_box_scale
+            scale = self._effective_search_box_scale()
+            bw = seed.w * scale
+            bh = seed.h * scale
             if bw <= 1.0 or bh <= 1.0:
                 continue
 
@@ -669,18 +701,82 @@ class OSTrackTracker:
             self._uncertain_frames = 0
             self._lost_frames = 0
             self._low_similarity_frames = 0
+            self._search_hint_bbox = None
+            self._search_backoff_level = 0
             return TrackResult(True, best_bbox, best_score, "TRACKING", "Reacquired in search")
 
+        self._bump_search_backoff()
         return self._mark_uncertain(None, "Searching (probe miss)")
 
     def _should_run_search(self) -> bool:
-        if self.search_interval_frames <= 1:
+        interval = self._effective_search_interval()
+        if interval <= 1:
             return True
         self._search_frame_count += 1
-        if self._search_frame_count >= self.search_interval_frames:
+        if self._search_frame_count >= interval:
             self._search_frame_count = 0
             return True
         return False
+
+    def _compute_search_interval_for_level(self, level: int) -> int:
+        interval = self.search_interval_frames * (2 ** max(level, 0))
+        if self.search_backoff_max_interval > 0:
+            interval = min(interval, self.search_backoff_max_interval)
+        return max(int(interval), 1)
+
+    def _compute_search_scale_for_level(self, level: int) -> float:
+        scale = self.search_box_scale * (self.search_backoff_scale_factor ** max(level, 0))
+        if self.search_backoff_max_scale > 0.0:
+            scale = min(scale, self.search_backoff_max_scale)
+        return max(float(scale), 0.1)
+
+    def _effective_search_interval(self) -> int:
+        if not self.search_backoff_enabled:
+            return self.search_interval_frames
+        return self._compute_search_interval_for_level(self._search_backoff_level)
+
+    def _effective_search_box_scale(self) -> float:
+        if not self.search_backoff_enabled:
+            return self.search_box_scale
+        return self._compute_search_scale_for_level(self._search_backoff_level)
+
+    def _bump_search_backoff(self) -> None:
+        if not self.search_backoff_enabled:
+            return
+        current_interval = self._compute_search_interval_for_level(self._search_backoff_level)
+        current_scale = self._compute_search_scale_for_level(self._search_backoff_level)
+        next_level = self._search_backoff_level + 1
+        next_interval = self._compute_search_interval_for_level(next_level)
+        next_scale = self._compute_search_scale_for_level(next_level)
+        if next_interval > current_interval or next_scale > current_scale:
+            self._search_backoff_level = next_level
+            self._search_frame_count = 0
+
+    def _update_search_hint(self, frame_bgr: np.ndarray) -> None:
+        if self._recent_bbox is not None:
+            seed = self._recent_bbox
+        elif self._long_bbox is not None:
+            seed = self._long_bbox
+        elif self._init_bbox is not None:
+            seed = self._init_bbox
+        else:
+            self._search_hint_bbox = None
+            return
+
+        h, w = frame_bgr.shape[:2]
+        step_x = seed.w * self.search_grid_step_factor
+        step_y = seed.h * self.search_grid_step_factor
+        scale = self._effective_search_box_scale()
+        bw = seed.w * scale + (2.0 * step_x)
+        bh = seed.h * scale + (2.0 * step_y)
+        if bw <= 1.0 or bh <= 1.0:
+            self._search_hint_bbox = None
+            return
+
+        cx = 0.5 * (seed.x1 + seed.x2)
+        cy = 0.5 * (seed.y1 + seed.y2)
+        hint = BBox(cx - 0.5 * bw, cy - 0.5 * bh, cx + 0.5 * bw, cy + 0.5 * bh).clip(w, h)
+        self._search_hint_bbox = hint
 
     def _probe_state(self, frame_bgr: np.ndarray, state_bbox: BBox) -> Optional[tuple[BBox, Optional[float]]]:
         if self._backend is None:
@@ -772,6 +868,9 @@ class OSTrackTracker:
 
     def is_verifying(self) -> bool:
         return self._verification_active
+
+    def get_search_hint_bbox(self) -> Optional[BBox]:
+        return self._search_hint_bbox
 
     def _maybe_update_appearance(
         self,

@@ -47,6 +47,25 @@ def draw_track(frame, bbox, label="TRACK MODE", color=GREEN):
     )
 
 
+def draw_search_area(frame, bbox, label="SEARCH AREA", color=BLUE):
+    x1 = int(bbox.x1)
+    y1 = int(bbox.y1)
+    x2 = int(bbox.x2)
+    y2 = int(bbox.y2)
+
+    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+    cv2.putText(
+        frame,
+        label,
+        (x1, y1 - 10 if y1 > 14 else y1 + 22),
+        FONT,
+        0.7,
+        color,
+        2,
+        cv2.LINE_AA,
+    )
+
+
 def select_roi_on_frame(window_name: str, frame):
     """
     Pause and let user drag ROI.
@@ -100,12 +119,16 @@ def main():
         search_grid_step_factor=1.0,  # Grid probe step as fraction of bbox size; lower to reduce jumps.
         search_box_scale=2.0,  # Scale probe bbox size to expand search crop.
         search_max_probes=4,  # Max probes per SEARCHING frame; reduce if too slow.
-        search_min_similarity=0.50,  # Min identity similarity to accept a probe.
+        search_min_similarity=0.3,  # Min identity similarity to accept a probe.
         search_min_score=0.4,  # Min tracker score to accept a probe.
         search_interval_frames=6,  # Run SEARCHING probes every N frames (1 = every frame).
+        search_backoff_enabled=True,  # Expand search area and reduce search frequency on probe misses.
+        search_backoff_scale_factor=1.5,  # Scale multiplier per backoff level.
+        search_backoff_max_scale=4.5,  # Max scale for search area expansion.
+        search_backoff_max_interval=12,  # Max interval between search probes.
     )
 
-    cap = cv2.VideoCapture("./assets/air_show.mp4")
+    cap = cv2.VideoCapture("./assets/drone.mp4")
 
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -214,6 +237,10 @@ def main():
                     2,
                     cv2.LINE_AA,
                 )
+                if result.state == "SEARCHING":
+                    hint = tracker.get_search_hint_bbox()
+                    if hint is not None:
+                        draw_search_area(frame, hint)
             else:
                 tracker.reset()
                 state.reset_to_select()
