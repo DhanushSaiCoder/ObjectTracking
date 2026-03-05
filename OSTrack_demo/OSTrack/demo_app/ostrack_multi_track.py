@@ -14,6 +14,7 @@ GREEN = (0, 255, 0)
 RED = (0, 0, 255)
 YELLOW = (0, 255, 255)
 BLUE = (255, 0, 0)
+CYAN = (255, 255, 0)
 PALETTE = [
     (0, 255, 0),
     (255, 200, 0),
@@ -28,6 +29,18 @@ PALETTE = [
 TRACK_UPDATE_INTERVAL = 2  # Update each tracker every N frames to reduce load.
 DRAW_SEARCH_HINTS = False  # Disable to save draw cost when many objects.
 MAX_STATUS_LINES = 6
+SHOW_HELP_DEFAULT = True
+
+HELP_LINES = [
+    "Controls:",
+    "  P: pause/resume",
+    "  Mouse drag: draw ROIs (paused)",
+    "  Enter: add drawn ROIs",
+    "  C: clear drawn ROIs",
+    "  R: reset all",
+    "  H: toggle help",
+    "  Q: quit",
+]
 
 TRACKER_KWARGS = {
     "tracker_name": "ostrack",
@@ -88,6 +101,11 @@ class AppState:
         self.tracks = {}
         self.next_track_id = 1
         self.frame_index = 0
+        self.show_help = SHOW_HELP_DEFAULT
+        self.pending_rois = []
+        self.is_drawing = False
+        self.drag_start = None
+        self.drag_current = None
 
     def reset_to_select(self):
         self.mode = "SELECT"
@@ -96,6 +114,10 @@ class AppState:
         self.tracks = {}
         self.next_track_id = 1
         self.frame_index = 0
+        self.pending_rois = []
+        self.is_drawing = False
+        self.drag_start = None
+        self.drag_current = None
 
 
 def draw_track(frame, bbox, label="TRACK MODE", color=GREEN):
@@ -141,21 +163,87 @@ def draw_search_area(frame, bbox, label="SEARCH AREA", color=BLUE):
     )
 
 
-def select_rois_on_frame(window_name: str, frame):
-    rois = cv2.selectROIs(window_name, frame, fromCenter=False, showCrosshair=True)
-    boxes = []
-    for roi in rois:
-        x, y, w, h = roi
-        if w <= 0 or h <= 0:
+def draw_help(frame, lines, start_y, color=WHITE):
+    y = start_y
+    for line in lines:
+        cv2.putText(frame, line, (10, y), FONT, 0.55, color, 2, cv2.LINE_AA)
+        y += 22
+
+
+def draw_pending_rois(frame, pending, drag_start, drag_current):
+    for bbox in pending:
+        draw_search_area(frame, bbox, label="PENDING", color=CYAN)
+    if drag_start is not None and drag_current is not None:
+        x1, y1 = drag_start
+        x2, y2 = drag_current
+        bx1, bx2 = (x1, x2) if x1 <= x2 else (x2, x1)
+        by1, by2 = (y1, y2) if y1 <= y2 else (y2, y1)
+        bbox = BBox(float(bx1), float(by1), float(bx2), float(by2))
+        draw_search_area(frame, bbox, label="DRAW", color=CYAN)
+
+
+def add_rois(state: AppState, repo_root: Path, frozen, rois):
+    added = 0
+    if not rois:
+        print("No ROIs to add")
+        return added
+
+    for roi_bbox in rois:
+        tracker = make_tracker(repo_root)
+        ok = tracker.initialize(frozen, roi_bbox)
+        print(f"Tracker initialize [{state.next_track_id}]: {ok} | bbox={roi_bbox}")
+        if not ok:
+            tracker.reset()
             continue
-        boxes.append(BBox(float(x), float(y), float(x + w), float(y + h)))
-    return boxes
+        color = PALETTE[(state.next_track_id - 1) % len(PALETTE)]
+        state.tracks[state.next_track_id] = {
+            "tracker": tracker,
+            "color": color,
+            "active": True,
+            "last_result": TrackResult(True, roi_bbox, None, "TRACKING", "INIT"),
+            "needs_first_update": True,
+        }
+        state.next_track_id += 1
+        added += 1
+
+    if added > 0:
+        state.mode = "TRACK"
+        print(f"Added tracks: {added} | Active: {sum(1 for t in state.tracks.values() if t['active'])}")
+    else:
+        print("All OSTrack initializations failed")
+    return added
+
+
+def on_mouse(event, x, y, flags, state: AppState):
+    if not state.paused:
+        return
+    if event == cv2.EVENT_LBUTTONDOWN:
+        state.is_drawing = True
+        state.drag_start = (x, y)
+        state.drag_current = (x, y)
+    elif event == cv2.EVENT_MOUSEMOVE and state.is_drawing:
+        state.drag_current = (x, y)
+    elif event == cv2.EVENT_LBUTTONUP and state.is_drawing:
+        state.is_drawing = False
+        state.drag_current = (x, y)
+        if state.drag_start is None or state.drag_current is None:
+            state.drag_start = None
+            state.drag_current = None
+            return
+        x1, y1 = state.drag_start
+        x2, y2 = state.drag_current
+        bx1, bx2 = (x1, x2) if x1 <= x2 else (x2, x1)
+        by1, by2 = (y1, y2) if y1 <= y2 else (y2, y1)
+        if abs(bx2 - bx1) > 1 and abs(by2 - by1) > 1:
+            state.pending_rois.append(BBox(float(bx1), float(by1), float(bx2), float(by2)))
+        state.drag_start = None
+        state.drag_current = None
 
 
 def main():
     repo_root = Path(__file__).resolve().parents[1]
 
-    cap = cv2.VideoCapture("./assets/cars.mp4")
+    cap = cv2.VideoCapture("./assets/air_show.mp4")
 
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -181,12 +269,15 @@ def main():
 
     window_name = "OSTrack Multi ROI Demo"
     cv2.namedWindow(window_name, cv2.WINDOW_AUTOSIZE)
+    cv2.setMouseCallback(window_name, lambda event, x, y, flags, param: on_mouse(event, x, y, flags, state))
 
     print("\nInstructions:")
-    print("  - Press 'p' to pause and choose multiple ROIs")
-    print("  - Drag ROIs, press ENTER to confirm all")
-    print("  - Press 'c' inside ROI tool to cancel")
-    print("  - Press 'r' to reset to SELECT mode")
+    print("  - Press 'p' to pause/resume")
+    print("  - While paused, draw ROIs with mouse")
+    print("  - Press ENTER to add drawn ROIs")
+    print("  - Press 'c' to clear drawn ROIs")
+    print("  - Press 'r' to reset all")
+    print("  - Press 'h' to toggle on-screen help")
     print("  - Press 'q' to quit\n")
 
     prev_time = time.perf_counter()
@@ -214,26 +305,21 @@ def main():
         inst_fps = 1.0 / dt
         fps_smooth = inst_fps if fps_smooth == 0.0 else (0.9 * fps_smooth + 0.1 * inst_fps)
 
+        active_tracks = sum(1 for t in state.tracks.values() if t["active"])
+        mode_line = f"MODE: {state.mode} | Active: {active_tracks} | {'PAUSED' if state.paused else 'LIVE'}"
+        draw_status(frame, mode_line, 0, WHITE)
+
         if state.mode == "SELECT":
-            cv2.putText(
-                frame,
-                "SELECT MODE: Press 'p' to pause and choose ROIs",
-                (10, 25),
-                FONT,
-                0.7,
-                WHITE,
-                2,
-                cv2.LINE_AA,
-            )
+            draw_status(frame, "Press 'p' to pause and draw ROIs", 1, WHITE)
             if state.paused:
-                draw_status(frame, "PAUSED: Draw ROIs or press 'c'", 1, YELLOW)
+                draw_status(frame, "PAUSED: Draw ROIs, Enter to add, P to resume", 2, YELLOW)
         else:   # TRACK mode (multi-object)
             if state.paused:
-                draw_status(frame, "PAUSED: Draw ROIs to add", 0, YELLOW)
+                draw_status(frame, "PAUSED: Draw ROIs, Enter to add, P to resume", 1, YELLOW)
             active_count = 0
             lost_ids = []
             status_lines = []
-            do_update = (state.frame_index % TRACK_UPDATE_INTERVAL) == 0
+            do_update = (not state.paused) and (state.frame_index % TRACK_UPDATE_INTERVAL) == 0
             for tid in sorted(state.tracks.keys()):
                 track = state.tracks[tid]
                 if not track["active"]:
@@ -276,7 +362,7 @@ def main():
                     lost_ids.append(tid)
 
             for i, (text, color) in enumerate(status_lines[:MAX_STATUS_LINES]):
-                draw_status(frame, text, i, color)
+                draw_status(frame, text, i + 1, color)
 
             if lost_ids:
                 print(f"Lost tracks: {lost_ids}")
@@ -294,7 +380,13 @@ def main():
                     cv2.LINE_AA,
                 )
 
+        if state.paused:
+            draw_pending_rois(frame, state.pending_rois, state.drag_start, state.drag_current)
+
         # common overlays
+        if state.show_help:
+            help_height = 22 * len(HELP_LINES)
+            draw_help(frame, HELP_LINES, frame_h - help_height - 20, WHITE)
         cv2.putText(
             frame,
             f"FPS: {fps_smooth:.1f}",
@@ -314,47 +406,41 @@ def main():
         if key == ord("q"):
             break
 
+        elif key == ord("h"):
+            state.show_help = not state.show_help
+
         elif key == ord("r"):
             for track in state.tracks.values():
                 track["tracker"].reset()
             state.reset_to_select()
             print("Reset to SELECT mode")
 
-        elif key == ord("p") and state.last_frame is not None:
-            state.paused = True
-            frozen = state.last_frame.copy()
-            rois = select_rois_on_frame(window_name, frozen)
-
-            if not rois:
-                print("ROI selection cancelled/empty")
-                state.paused = False
-                continue
-
-            added = 0
-            for roi_bbox in rois:
-                tracker = make_tracker(repo_root)
-                ok = tracker.initialize(frozen, roi_bbox)
-                print(f"Tracker initialize [{state.next_track_id}]: {ok} | bbox={roi_bbox}")
-                if not ok:
-                    tracker.reset()
-                    continue
-                color = PALETTE[(state.next_track_id - 1) % len(PALETTE)]
-                state.tracks[state.next_track_id] = {
-                    "tracker": tracker,
-                    "color": color,
-                    "active": True,
-                    "last_result": TrackResult(True, roi_bbox, None, "TRACKING", "INIT"),
-                    "needs_first_update": True,
-                }
-                state.next_track_id += 1
-                added += 1
-
-            if added > 0:
-                state.mode = "TRACK"
-                print(f"Added tracks: {added} | Active: {sum(1 for t in state.tracks.values() if t['active'])}")
+        elif key == ord("p"):
+            if not state.paused:
+                state.paused = True
             else:
-                print("All OSTrack initializations failed")
-            state.paused = False
+                state.paused = False
+                state.pending_rois = []
+                state.is_drawing = False
+                state.drag_start = None
+                state.drag_current = None
+
+        elif key in (13, 10) and state.paused:
+            if state.last_frame is None:
+                continue
+            frozen = state.last_frame.copy()
+            rois = list(state.pending_rois)
+            add_rois(state, repo_root, frozen, rois)
+            state.pending_rois = []
+            state.is_drawing = False
+            state.drag_start = None
+            state.drag_current = None
+
+        elif key == ord("c") and state.paused:
+            state.pending_rois = []
+            state.is_drawing = False
+            state.drag_start = None
+            state.drag_current = None
 
     cap.release()
     cv2.destroyAllWindows()
