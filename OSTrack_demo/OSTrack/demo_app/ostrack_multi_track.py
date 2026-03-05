@@ -53,7 +53,7 @@ TRACKER_KWARGS = {
     "dataset_name": "demo",
     "verbose": True,
     "min_confidence": 0.3,
-    "max_center_distance_factor": 1.5,
+    "max_center_distance_factor": 0.35,
     "min_area_ratio": 0.20,
     "max_area_ratio": 1.5,
     "consistency_relax_score": 0.55,
@@ -93,7 +93,7 @@ TRACKER_KWARGS = {
     "search_backoff_max_interval": 12,
 }
 
-SOURCE_PATH = "./assets/air_show.mp4"
+SOURCE_PATH = "./assets/cars.mp4"
 
 
 def main() -> None:
