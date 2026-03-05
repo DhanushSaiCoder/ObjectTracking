@@ -2,20 +2,22 @@ import os
 os.environ["MPLBACKEND"] = "Agg"
 
 import time
-import cv2
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from ostrack_tracker import OSTrackTracker, BBox, TrackResult
+import cv2
+
+from OSTrackMOT import OSTrackMOT
 
 
 FONT = cv2.FONT_HERSHEY_SIMPLEX
-WHITE = (255, 255, 255)
-GREEN = (0, 255, 0)
-RED = (0, 0, 255)
-YELLOW = (0, 255, 255)
-BLUE = (255, 0, 0)
-CYAN = (255, 255, 0)
+
+COLORS = {
+    "white": (255, 255, 255),
+    "yellow": (0, 255, 255),
+    "blue": (255, 0, 0),
+    "cyan": (255, 255, 0),
+}
+
 PALETTE = [
     (0, 255, 0),
     (255, 200, 0),
@@ -91,162 +93,16 @@ TRACKER_KWARGS = {
     "search_backoff_max_interval": 12,
 }
 
-
-def make_tracker(repo_root: Path) -> OSTrackTracker:
-    return OSTrackTracker(repo_root=str(repo_root), **TRACKER_KWARGS)
+SOURCE_PATH = "./assets/air_show.mp4"
 
 
-class AppState:
-    def __init__(self):
-        self.mode = "SELECT"   # SELECT / TRACK
-        self.paused = False
-        self.last_frame = None
-        self.tracks = {}
-        self.next_track_id = 1
-        self.frame_index = 0
-        self.show_help = SHOW_HELP_DEFAULT
-        self.pending_rois = []
-        self.is_drawing = False
-        self.drag_start = None
-        self.drag_current = None
-
-    def reset_to_select(self):
-        self.mode = "SELECT"
-        self.paused = False
-        self.last_frame = None
-        self.tracks = {}
-        self.next_track_id = 1
-        self.frame_index = 0
-        self.pending_rois = []
-        self.is_drawing = False
-        self.drag_start = None
-        self.drag_current = None
-
-
-def draw_track(frame, bbox, label="TRACK MODE", color=GREEN):
-    x1 = int(bbox.x1)
-    y1 = int(bbox.y1)
-    x2 = int(bbox.x2)
-    y2 = int(bbox.y2)
-
-    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 3)
-    cv2.putText(
-        frame,
-        label,
-        (x1, y1 - 10 if y1 > 14 else y1 + 22),
-        FONT,
-        0.7,
-        color,
-        2,
-        cv2.LINE_AA,
-    )
-
-
-def draw_status(frame, text: str, line_idx: int, color=WHITE):
-    y = 30 + line_idx * 24
-    cv2.putText(frame, text, (10, y), FONT, 0.6, color, 2, cv2.LINE_AA)
-
-
-def draw_search_area(frame, bbox, label="SEARCH AREA", color=BLUE):
-    x1 = int(bbox.x1)
-    y1 = int(bbox.y1)
-    x2 = int(bbox.x2)
-    y2 = int(bbox.y2)
-
-    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-    cv2.putText(
-        frame,
-        label,
-        (x1, y1 - 10 if y1 > 14 else y1 + 22),
-        FONT,
-        0.7,
-        color,
-        2,
-        cv2.LINE_AA,
-    )
-
-
-def draw_help(frame, lines, start_y, color=WHITE):
-    y = start_y
-    for line in lines:
-        cv2.putText(frame, line, (10, y), FONT, 0.55, color, 2, cv2.LINE_AA)
-        y += 22
-
-
-def draw_pending_rois(frame, pending, drag_start, drag_current):
-    for bbox in pending:
-        draw_search_area(frame, bbox, label="PENDING", color=CYAN)
-    if drag_start is not None and drag_current is not None:
-        x1, y1 = drag_start
-        x2, y2 = drag_current
-        bx1, bx2 = (x1, x2) if x1 <= x2 else (x2, x1)
-        by1, by2 = (y1, y2) if y1 <= y2 else (y2, y1)
-        bbox = BBox(float(bx1), float(by1), float(bx2), float(by2))
-        draw_search_area(frame, bbox, label="DRAW", color=CYAN)
-
-
-def add_rois(state: AppState, repo_root: Path, frozen, rois):
-    added = 0
-    if not rois:
-        print("No ROIs to add")
-        return added
-
-    for roi_bbox in rois:
-        tracker = make_tracker(repo_root)
-        ok = tracker.initialize(frozen, roi_bbox)
-        print(f"Tracker initialize [{state.next_track_id}]: {ok} | bbox={roi_bbox}")
-        if not ok:
-            tracker.reset()
-            continue
-        color = PALETTE[(state.next_track_id - 1) % len(PALETTE)]
-        state.tracks[state.next_track_id] = {
-            "tracker": tracker,
-            "color": color,
-            "active": True,
-            "last_result": TrackResult(True, roi_bbox, None, "TRACKING", "INIT"),
-            "needs_first_update": True,
-        }
-        state.next_track_id += 1
-        added += 1
-
-    if added > 0:
-        state.mode = "TRACK"
-        print(f"Added tracks: {added} | Active: {sum(1 for t in state.tracks.values() if t['active'])}")
-    else:
-        print("All OSTrack initializations failed")
-    return added
-
-
-def on_mouse(event, x, y, flags, state: AppState):
-    if not state.paused:
-        return
-    if event == cv2.EVENT_LBUTTONDOWN:
-        state.is_drawing = True
-        state.drag_start = (x, y)
-        state.drag_current = (x, y)
-    elif event == cv2.EVENT_MOUSEMOVE and state.is_drawing:
-        state.drag_current = (x, y)
-    elif event == cv2.EVENT_LBUTTONUP and state.is_drawing:
-        state.is_drawing = False
-        state.drag_current = (x, y)
-        if state.drag_start is None or state.drag_current is None:
-            state.drag_start = None
-            state.drag_current = None
-            return
-        x1, y1 = state.drag_start
-        x2, y2 = state.drag_current
-        bx1, bx2 = (x1, x2) if x1 <= x2 else (x2, x1)
-        by1, by2 = (y1, y2) if y1 <= y2 else (y2, y1)
-        if abs(bx2 - bx1) > 1 and abs(by2 - by1) > 1:
-            state.pending_rois.append(BBox(float(bx1), float(by1), float(bx2), float(by2)))
-        state.drag_start = None
-        state.drag_current = None
-
-
-def main():
+def main() -> None:
     repo_root = Path(__file__).resolve().parents[1]
 
-    cap = cv2.VideoCapture("./assets/air_show.mp4")
+    cap = cv2.VideoCapture(SOURCE_PATH)
+    if not cap.isOpened():
+        print(f"ERROR: Could not open source: {SOURCE_PATH}")
+        return
 
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -254,25 +110,35 @@ def main():
     if src_fps <= 1e-3:
         src_fps = 30.0  # fallback if video metadata is bad
 
+    output_dir = Path(__file__).resolve().parent / "outputs"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / f"{time.perf_counter():.0f}.mp4"
     output = cv2.VideoWriter(
-        f"outputs/{time.perf_counter()}.mp4",
-        cv2.VideoWriter_fourcc(*'MP4V'),
+        str(output_path),
+        cv2.VideoWriter_fourcc(*"MP4V"),
         src_fps,
-        (width,height)
+        (width, height),
     )
 
     frame_delay_ms = max(1, int(1000 / src_fps))
     print(f"Source FPS: {src_fps:.2f}, frame delay: {frame_delay_ms} ms")
 
-    if not cap.isOpened():
-        print("ERROR: Could not open source")
-        return
-
-    state = AppState()
+    mot = OSTrackMOT(
+        repo_root=repo_root,
+        tracker_kwargs=TRACKER_KWARGS,
+        palette=PALETTE,
+        update_interval=TRACK_UPDATE_INTERVAL,
+        draw_search_hints=DRAW_SEARCH_HINTS,
+        max_status_lines=MAX_STATUS_LINES,
+        show_help_default=SHOW_HELP_DEFAULT,
+        enable_concurrency=ENABLE_CONCURRENCY,
+        max_workers=MAX_WORKERS,
+        help_lines=HELP_LINES,
+    )
 
     window_name = "OSTrack Multi ROI Demo"
     cv2.namedWindow(window_name, cv2.WINDOW_AUTOSIZE)
-    cv2.setMouseCallback(window_name, lambda event, x, y, flags, param: on_mouse(event, x, y, flags, state))
+    cv2.setMouseCallback(window_name, mot.on_mouse)
 
     print("\nInstructions:")
     print("  - Press 'p' to pause/resume")
@@ -286,193 +152,43 @@ def main():
     prev_time = time.perf_counter()
     fps_smooth = 0.0
 
-    executor = ThreadPoolExecutor(max_workers=MAX_WORKERS) if ENABLE_CONCURRENCY else None
-    while True:
-        # In paused mode, keep showing same frame
-        if not state.paused:
-            ok, frame = cap.read()
-            if not ok or frame is None:
-                print("End of stream / failed to read frame")
-                break
-            state.last_frame = frame
-            state.frame_index += 1
-        else:
-            if state.last_frame is None:
-                continue
-            frame = state.last_frame.copy()
-
-        frame_h = frame.shape[0]
-
-        now = time.perf_counter()
-        dt = max(now - prev_time, 1e-6)
-        prev_time = now
-        inst_fps = 1.0 / dt
-        fps_smooth = inst_fps if fps_smooth == 0.0 else (0.9 * fps_smooth + 0.1 * inst_fps)
-
-        active_tracks = sum(1 for t in state.tracks.values() if t["active"])
-        mode_line = f"MODE: {state.mode} | Active: {active_tracks} | {'PAUSED' if state.paused else 'LIVE'}"
-        draw_status(frame, mode_line, 0, WHITE)
-
-        if state.mode == "SELECT":
-            draw_status(frame, "Press 'p' to pause and draw ROIs", 1, WHITE)
-            if state.paused:
-                draw_status(frame, "PAUSED: Draw ROIs, Enter to add, P to resume", 2, YELLOW)
-        else:   # TRACK mode (multi-object)
-            if state.paused:
-                draw_status(frame, "PAUSED: Draw ROIs, Enter to add, P to resume", 1, YELLOW)
-            active_count = 0
-            lost_ids = []
-            status_lines = []
-            do_update = (not state.paused) and (state.frame_index % TRACK_UPDATE_INTERVAL) == 0
-            active_ids = [tid for tid in sorted(state.tracks.keys()) if state.tracks[tid]["active"]]
-            active_count = len(active_ids)
-
-            results_by_id = {}
-            if do_update and active_ids:
-                if ENABLE_CONCURRENCY and executor is not None:
-                    futures = {}
-                    for tid in active_ids:
-                        track = state.tracks[tid]
-                        if track.get("needs_first_update", False) or do_update:
-                            futures[executor.submit(track["tracker"].update, frame)] = tid
-                    for fut in as_completed(futures):
-                        tid = futures[fut]
-                        try:
-                            results_by_id[tid] = fut.result()
-                        except Exception as exc:
-                            results_by_id[tid] = TrackResult(False, None, None, "LOST", f"Update exception: {exc}")
-                else:
-                    for tid in active_ids:
-                        track = state.tracks[tid]
-                        if track.get("needs_first_update", False) or do_update:
-                            try:
-                                results_by_id[tid] = track["tracker"].update(frame)
-                            except Exception as exc:
-                                results_by_id[tid] = TrackResult(False, None, None, "LOST", f"Update exception: {exc}")
-
-            for tid in active_ids:
-                track = state.tracks[tid]
-                color = track["color"]
-                tracker = track["tracker"]
-                needs_update = do_update or track.get("needs_first_update", False)
-                if needs_update and tid in results_by_id:
-                    result = results_by_id[tid]
-                    track["last_result"] = result
-                    track["needs_first_update"] = False
-                else:
-                    result = track.get("last_result")
-                    if result is None:
-                        continue
-
-                if result.ok and result.bbox is not None:
-                    label = f"ID {tid}"
-                    if result.score is not None:
-                        label = f"ID {tid} {result.score:.2f}"
-                    verifying = tracker.is_verifying()
-                    appearance_updated = tracker.consume_appearance_update_flag() if needs_update else False
-                    box_color = color
-                    if verifying:
-                        box_color = BLUE
-                    elif appearance_updated:
-                        box_color = YELLOW
-                    draw_track(frame, result.bbox, label, box_color)
-                elif result.state in ("UNCERTAIN", "SEARCHING"):
-                    msg = result.message if result.message else "Target uncertain"
-                    status_lines.append((f"ID {tid} {result.state}: {msg}", WHITE if result.state == "SEARCHING" else YELLOW))
-                    if DRAW_SEARCH_HINTS and result.state == "SEARCHING":
-                        hint = tracker.get_search_hint_bbox()
-                        if hint is not None:
-                            draw_search_area(frame, hint, label=f"SEARCH ID {tid}", color=color)
-                else:
-                    tracker.reset()
-                    track["active"] = False
-                    lost_ids.append(tid)
-
-            for i, (text, color) in enumerate(status_lines[:MAX_STATUS_LINES]):
-                draw_status(frame, text, i + 1, color)
-
-            if lost_ids:
-                print(f"Lost tracks: {lost_ids}")
-
-            if active_count == 0:
-                state.reset_to_select()
-                cv2.putText(
-                    frame,
-                    "All tracks lost - Back to SELECT mode",
-                    (10, 30),
-                    FONT,
-                    0.7,
-                    RED,
-                    2,
-                    cv2.LINE_AA,
-                )
-
-        if state.paused:
-            draw_pending_rois(frame, state.pending_rois, state.drag_start, state.drag_current)
-
-        # common overlays
-        if state.show_help:
-            help_height = 22 * len(HELP_LINES)
-            draw_help(frame, HELP_LINES, frame_h - help_height - 20, WHITE)
-        cv2.putText(
-            frame,
-            f"FPS: {fps_smooth:.1f}",
-            (10, frame_h - 10),
-            FONT,
-            0.7,
-            WHITE,
-            2,
-            cv2.LINE_AA,
-        )
-
-        cv2.imshow(window_name, frame)
-        
-        output.write(frame)
-
-        key = cv2.waitKey(frame_delay_ms) & 0xFF
-        if key == ord("q"):
-            break
-
-        elif key == ord("h"):
-            state.show_help = not state.show_help
-
-        elif key == ord("r"):
-            for track in state.tracks.values():
-                track["tracker"].reset()
-            state.reset_to_select()
-            print("Reset to SELECT mode")
-
-        elif key == ord("p"):
-            if not state.paused:
-                state.paused = True
+    try:
+        while True:
+            if not mot.paused:
+                ok, frame = cap.read()
+                if not ok or frame is None:
+                    print("End of stream / failed to read frame")
+                    break
+                mot.on_new_frame(frame)
             else:
-                state.paused = False
-                state.pending_rois = []
-                state.is_drawing = False
-                state.drag_start = None
-                state.drag_current = None
+                if mot.last_frame is None:
+                    key = cv2.waitKey(frame_delay_ms) & 0xFF
+                    if key == ord("q"):
+                        break
+                    mot.handle_key(key, None)
+                    continue
+                frame = mot.last_frame.copy()
 
-        elif key in (13, 10) and state.paused:
-            if state.last_frame is None:
-                continue
-            frozen = state.last_frame.copy()
-            rois = list(state.pending_rois)
-            add_rois(state, repo_root, frozen, rois)
-            state.pending_rois = []
-            state.is_drawing = False
-            state.drag_start = None
-            state.drag_current = None
+            now = time.perf_counter()
+            dt = max(now - prev_time, 1e-6)
+            prev_time = now
+            inst_fps = 1.0 / dt
+            fps_smooth = inst_fps if fps_smooth == 0.0 else (0.9 * fps_smooth + 0.1 * inst_fps)
 
-        elif key == ord("c") and state.paused:
-            state.pending_rois = []
-            state.is_drawing = False
-            state.drag_start = None
-            state.drag_current = None
+            mot.update_and_draw(frame, FONT, COLORS, fps_smooth)
 
-    if executor is not None:
-        executor.shutdown(wait=True)
-    cap.release()
-    cv2.destroyAllWindows()
+            cv2.imshow(window_name, frame)
+            output.write(frame)
+
+            key = cv2.waitKey(frame_delay_ms) & 0xFF
+            if key == ord("q"):
+                break
+            mot.handle_key(key, frame)
+    finally:
+        mot.shutdown()
+        output.release()
+        cap.release()
+        cv2.destroyAllWindows()
 
 
 if __name__ == "__main__":
