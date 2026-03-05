@@ -4,6 +4,7 @@ os.environ["MPLBACKEND"] = "Agg"
 import time
 import cv2
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from ostrack_tracker import OSTrackTracker, BBox, TrackResult
 
@@ -27,9 +28,11 @@ PALETTE = [
 ]
 
 TRACK_UPDATE_INTERVAL = 2  # Update each tracker every N frames to reduce load.
-DRAW_SEARCH_HINTS = False  # Disable to save draw cost when many objects.
+DRAW_SEARCH_HINTS = True  # Disable to save draw cost when many objects.
 MAX_STATUS_LINES = 6
 SHOW_HELP_DEFAULT = True
+ENABLE_CONCURRENCY = True
+MAX_WORKERS = 6
 
 HELP_LINES = [
     "Controls:",
@@ -283,6 +286,7 @@ def main():
     prev_time = time.perf_counter()
     fps_smooth = 0.0
 
+    executor = ThreadPoolExecutor(max_workers=MAX_WORKERS) if ENABLE_CONCURRENCY else None
     while True:
         # In paused mode, keep showing same frame
         if not state.paused:
@@ -320,16 +324,39 @@ def main():
             lost_ids = []
             status_lines = []
             do_update = (not state.paused) and (state.frame_index % TRACK_UPDATE_INTERVAL) == 0
-            for tid in sorted(state.tracks.keys()):
+            active_ids = [tid for tid in sorted(state.tracks.keys()) if state.tracks[tid]["active"]]
+            active_count = len(active_ids)
+
+            results_by_id = {}
+            if do_update and active_ids:
+                if ENABLE_CONCURRENCY and executor is not None:
+                    futures = {}
+                    for tid in active_ids:
+                        track = state.tracks[tid]
+                        if track.get("needs_first_update", False) or do_update:
+                            futures[executor.submit(track["tracker"].update, frame)] = tid
+                    for fut in as_completed(futures):
+                        tid = futures[fut]
+                        try:
+                            results_by_id[tid] = fut.result()
+                        except Exception as exc:
+                            results_by_id[tid] = TrackResult(False, None, None, "LOST", f"Update exception: {exc}")
+                else:
+                    for tid in active_ids:
+                        track = state.tracks[tid]
+                        if track.get("needs_first_update", False) or do_update:
+                            try:
+                                results_by_id[tid] = track["tracker"].update(frame)
+                            except Exception as exc:
+                                results_by_id[tid] = TrackResult(False, None, None, "LOST", f"Update exception: {exc}")
+
+            for tid in active_ids:
                 track = state.tracks[tid]
-                if not track["active"]:
-                    continue
-                active_count += 1
-                tracker = track["tracker"]
                 color = track["color"]
+                tracker = track["tracker"]
                 needs_update = do_update or track.get("needs_first_update", False)
-                if needs_update:
-                    result = tracker.update(frame)
+                if needs_update and tid in results_by_id:
+                    result = results_by_id[tid]
                     track["last_result"] = result
                     track["needs_first_update"] = False
                 else:
@@ -442,6 +469,8 @@ def main():
             state.drag_start = None
             state.drag_current = None
 
+    if executor is not None:
+        executor.shutdown(wait=True)
     cap.release()
     cv2.destroyAllWindows()
 
