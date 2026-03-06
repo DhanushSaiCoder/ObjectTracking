@@ -1,0 +1,3 @@
+[submodule "third_party/bot_sort"]
+	path = third_party/bot_sort
+	url = https://github.com/NirAharon/BoT-SORT.git
