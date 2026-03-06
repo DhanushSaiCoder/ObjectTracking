@@ -1,0 +1,29 @@
+# BoTSORT Tracker Configuration
+# MAXIMUM PERFORMANCE: Optimized for Air Show Stunts (Crossing, Loops, High-G)
+
+tracker_type: botsort
+track_high_thresh: 0.3    # Lowered slightly: aircraft at distance/angles might have lower scores
+track_low_thresh: 0.05    # Aggressive BYTE association to keep tracks during high-speed blur
+new_track_thresh: 0.5     # Higher threshold to ensure only strong detections start new IDs
+track_buffer: 200         # ~7 seconds at 30fps: survive long loops and smoke-trail occlusions
+match_thresh: 0.9         # EXTREME IoU matching: forces Re-ID to do the heavy lifting during crossings
+fuse_score: True          # Fuse detection confidence into the association cost
+
+# Re-ID Configuration (Using the highest-capacity native model)
+with_reid: True           
+model: yolo11x-cls.pt    # Use the 11-Extra Large classification model for high-fidelity embeddings
+
+# Proximity gating: 0.01 (Near-Total Ungating)
+# This allows the tracker to match a plane anywhere in the frame based on its 
+# visual signature, even if the Kalman filter fails to predict a 700mph turn.
+proximity_thresh: 0.01     
+
+# Appearance similarity: 0.1
+# Very permissive appearance threshold. Since yolo11x-cls is so powerful, 
+# it can distinguish between similar planes even with low similarity scores 
+# caused by upside-down or side-on orientations.
+appearance_thresh: 0.1   
+
+# Global Motion Compensation (GMC)
+# Essential for tracking objects while the camera is panning/zooming.
+gmc_method: sparseOptFlow  

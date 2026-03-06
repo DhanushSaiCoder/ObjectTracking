@@ -1,0 +1,6 @@
+Person ReID: BoT-SORT’s FastReID MOT17/20-SBS-S50 or OSNet(MSMT17) if you want more “in-the-wild” generalization.
+
+Vehicle ReID: vehicle-reid-0001 (fast, solid) or TransReID (heavier, potentially stronger).
+
+Thermal person ReID (optional): a visible–thermal ReID model (AGW baseline family).
+
