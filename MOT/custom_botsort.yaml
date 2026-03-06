@@ -9,9 +9,11 @@ track_buffer: 200         # ~7 seconds at 30fps: survive long loops and smoke-tr
 match_thresh: 0.9         # EXTREME IoU matching: forces Re-ID to do the heavy lifting during crossings
 fuse_score: True          # Fuse detection confidence into the association cost
 
-# Re-ID Configuration (Using the highest-capacity native model)
-with_reid: True           
-model: yolo11x-cls.pt    # Use the 11-Extra Large classification model for high-fidelity embeddings
+# Re-ID Configuration
+# FastReID is injected via MOT/patches/ultralytics_botsort_fastreid.py
+# Keep Ultralytics from auto-loading a YOLO classifier embedder.
+with_reid: False
+model: auto
 
 # Proximity gating: 0.01 (Near-Total Ungating)
 # This allows the tracker to match a plane anywhere in the frame based on its 

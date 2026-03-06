@@ -1,0 +1,6 @@
+# requirements.txt
+ultralytics>=8.3.114
+torch
+opencv-python
+gdown
+packaging

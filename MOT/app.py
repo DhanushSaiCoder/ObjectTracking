@@ -1,9 +1,19 @@
+import argparse
 import cv2
+import os
+import sys
 import time
 from pathlib import Path
 from typing import List, Set, Tuple, Optional
-from ultralytics import RTDETR
+
 import numpy as np
+from ultralytics import RTDETR
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from MOT.patches.ultralytics_botsort_fastreid import apply_botsort_fastreid_patch
 
 # Styling constants
 FONT = cv2.FONT_HERSHEY_SIMPLEX
@@ -41,9 +51,17 @@ class BBox:
         return inter / union
 
 class MOTApp:
-    def __init__(self, model_path: str, source: str):
+    def __init__(
+        self,
+        model_path: str,
+        source: str,
+        classes: Optional[List[int]] = None,
+        tracker_path: Optional[Path] = None,
+    ):
         self.model = RTDETR(model_path)
         self.source = source
+        self.classes = classes
+        self.tracker_path = tracker_path
         self.cap = cv2.VideoCapture(source)
         if not self.cap.isOpened():
             raise ValueError(f"Could not open source {source}")
@@ -125,6 +143,8 @@ class MOTApp:
             print("No matching track found for ROI")
 
     def run(self):
+        if self.tracker_path is None:
+            raise ValueError("tracker_path must be set before running the tracker.")
         print("Controls:")
         print("  P: pause/resume")
         print("  Click: toggle track activation")
@@ -141,7 +161,13 @@ class MOTApp:
                 self.last_frame = frame.copy()
                 
                 # Run BoTSORT tracking with custom configuration
-                results = self.model.track(frame, persist=True, tracker="./custom_botsort.yaml", verbose=False, classes=[4])
+                results = self.model.track(
+                    frame,
+                    persist=True,
+                    tracker=str(self.tracker_path),
+                    verbose=False,
+                    classes=self.classes,
+                )
                 
                 self.current_tracks = []
                 if results and results[0].boxes.id is not None:
@@ -202,22 +228,42 @@ class MOTApp:
         cv2.destroyAllWindows()
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="BoTSORT Multi-Object Tracker with FastReID")
+    parser.add_argument(
+        "--classes",
+        type=str,
+        default="4",
+        help="Comma-separated list of class IDs to track (e.g., '0,2,3').",
+    )
+    args = parser.parse_args()
+
+    def parse_classes(value: str) -> Optional[List[int]]:
+        if value is None:
+            return None
+        items = [v.strip() for v in value.split(",") if v.strip() != ""]
+        return [int(v) for v in items] if items else None
+
+    classes = parse_classes(args.classes)
+
+    apply_botsort_fastreid_patch()
+
     # Use a default model and video if available
-    repo_root = Path(__file__).resolve().parents[1]
-    model_path = str(repo_root / "OSTrack_demo/OSTrack/rtdetr-l.pt")
-    video_path = str(repo_root / "OSTrack_demo/OSTrack/demo_app/assets/air_show.mp4")
+    model_path = str(REPO_ROOT / "OSTrack_demo/OSTrack/rtdetr-l.pt")
+    video_path = str(REPO_ROOT / "MOT/assets/air_show.mp4")
+    tracker_path = REPO_ROOT / "MOT/custom_botsort.yaml"
     
     # Check if files exist
     if not Path(model_path).exists():
         print(f"ERROR: Model not found at {model_path}")
     if not Path(video_path).exists():
         print(f"ERROR: Video not found at {video_path}")
+    if not tracker_path.exists():
+        print(f"ERROR: Tracker config not found at {tracker_path}")
     
     # Ensure display is available for cv2.imshow
-    import os
     if "DISPLAY" not in os.environ:
         print("WARNING: No DISPLAY found. Application will not be able to show windows.")
         # In a real scenario, we might want to save output to a file instead
-    
-    app = MOTApp(model_path, video_path)
+
+    app = MOTApp(model_path, video_path, classes=classes, tracker_path=tracker_path)
     app.run()
